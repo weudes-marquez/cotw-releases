@@ -1,0 +1,71 @@
+# Dependencies
+node_modules/
+.pnp
+.pnp.js
+
+# Testing
+coverage/
+
+# Production builds
+dist/
+dist-electron/
+release/
+build/
+*.exe
+*.dmg
+*.AppImage
+
+# Environment variables
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+*_Zone.Identifier
+
+# Logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+lerna-debug.log*
+.pnpm-debug.log*
+
+# Temp files
+*.log
+*.tmp
+.cache/
+.vite/
+
+# Electron
+out/
+app/
+packages/
+
+# Firebase
+.firebase/
+firebase-debug.log
+firestore-debug.log
+
+# Database files
+*.sql
+*.sqlite
+*.db
+
+# Misc
+*.tsbuildinfo
+.eslintcache
+.env
+.env.development
+.env
+.env.dev

@@ -1,0 +1,472 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>COTW Need Zones - Standalone</title>
+
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+
+    <!-- React & ReactDOM -->
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+
+    <!-- Babel for JSX -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+    <!-- Google Fonts -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700&display=swap" rel="stylesheet">
+
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #111827;
+            /* gray-900 */
+            color: #f3f4f6;
+            /* gray-100 */
+        }
+
+        /* Custom Scrollbar */
+        ::-webkit-scrollbar {
+            width: 8px;
+            height: 8px;
+        }
+
+        ::-webkit-scrollbar-track {
+            background: #1f2937;
+        }
+
+        ::-webkit-scrollbar-thumb {
+            background: #4b5563;
+            border-radius: 4px;
+        }
+
+        ::-webkit-scrollbar-thumb:hover {
+            background: #6b7280;
+        }
+    </style>
+</head>
+
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        // --- 1. CONSTANTS & TYPES ---
+
+        const ZoneType = {
+            DRINK: 'Beber',
+            EAT: 'Comer',
+            REST: 'Descansar',
+            COLLECT: 'Coletando'
+        };
+
+        const ZONE_COLORS = {
+            [ZoneType.DRINK]: '#3b82f6', // blue-500
+            [ZoneType.EAT]: '#22c55e',   // green-500
+            [ZoneType.REST]: '#f97316',  // orange-500
+            [ZoneType.COLLECT]: '#a855f7' // purple-500 (UPDATED)
+        };
+
+        const ZONE_LABELS = {
+            [ZoneType.DRINK]: 'Beber',
+            [ZoneType.EAT]: 'Comer',
+            [ZoneType.REST]: 'Descansar',
+            [ZoneType.COLLECT]: 'Coletando'
+        };
+
+        const ZONE_BG_CLASSES = {
+            [ZoneType.DRINK]: 'bg-blue-500/20 text-blue-300 border-blue-500/50',
+            [ZoneType.EAT]: 'bg-green-500/20 text-green-300 border-green-500/50',
+            [ZoneType.REST]: 'bg-orange-500/20 text-orange-300 border-orange-500/50',
+            [ZoneType.COLLECT]: 'bg-purple-500/20 text-purple-300 border-purple-500/50'
+        };
+
+        // --- 2. MOCK DATA ---
+
+        const MOCK_MAPS = [
+            { id: 'map_001', name: 'Layton Lake' },
+            { id: 'map_002', name: 'Hirschfelden' },
+            { id: 'map_003', name: 'Yukon Valley' },
+            { id: 'map_004', name: 'Silver Ridge Peaks' },
+            { id: 'map_005', name: 'Revontuli Coast' },
+        ];
+
+        const MOCK_SPECIES = [
+            {
+                id: 'Alce',
+                needZones: [
+                    { mapId: 'map_001', time: '04-08', type: ZoneType.EAT },
+                    { mapId: 'map_001', time: '12-16', type: ZoneType.DRINK },
+                    { mapId: 'map_001', time: '16-20', type: ZoneType.REST },
+                    { mapId: 'map_001', time: '20-23', type: ZoneType.COLLECT },
+                    { mapId: 'map_003', time: '08-12', type: ZoneType.EAT },
+                    { mapId: 'map_003', time: '18-21', type: ZoneType.DRINK },
+                    { mapId: 'map_003', time: '22-02', type: ZoneType.COLLECT },
+                ]
+            },
+            {
+                id: 'Veado Vermelho',
+                needZones: [
+                    { mapId: 'map_002', time: '06-10', type: ZoneType.DRINK },
+                    { mapId: 'map_002', time: '10-14', type: ZoneType.EAT },
+                    { mapId: 'map_002', time: '14-18', type: ZoneType.REST },
+                    { mapId: 'map_005', time: '05-09', type: ZoneType.DRINK },
+                    { mapId: 'map_005', time: '20-23', type: ZoneType.COLLECT },
+                ]
+            },
+            {
+                id: 'Urso Pardo',
+                needZones: [
+                    { mapId: 'map_001', time: '00-04', type: ZoneType.DRINK },
+                    { mapId: 'map_001', time: '04-08', type: ZoneType.REST },
+                    { mapId: 'map_003', time: '03-07', type: ZoneType.DRINK },
+                    { mapId: 'map_003', time: '19-00', type: ZoneType.EAT },
+                ]
+            }
+        ];
+
+        // --- 3. ICONS (Simple SVGs) ---
+
+        const Icons = {
+            Search: () => <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8" /><path d="m21 21-4.3-4.3" /></svg>,
+            Clock: () => <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10" /><polyline points="12 6 12 12 16 14" /></svg>,
+            BarChart: () => <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 3v18h18" /><path d="M18 17V9" /><path d="M13 17V5" /><path d="M8 17v-3" /></svg>,
+            Info: () => <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10" /><path d="M12 16v-4" /><path d="M12 8h.01" /></svg>,
+            Filter: () => <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3" /></svg>
+        };
+
+        // --- 4. COMPONENTS ---
+
+        // --- ZoneClock Component ---
+        const ZoneClock = ({ zones, size = 300, highlightedType }) => {
+            const center = size / 2;
+            const radius = (size / 2) - 40;
+            const innerRadius = radius - 40;
+
+            const parseTime = (timeStr) => {
+                const parts = timeStr.split('-').map(p => parseInt(p.trim(), 10));
+                return { start: parts[0], end: parts[1] };
+            };
+
+            const createArc = (startHour, endHour, color, index, type) => {
+                if (endHour < startHour) {
+                    return (
+                        <g key={`split-${index}`}>
+                            {createArcPath(startHour, 24, color, index + 'a', type)}
+                            {createArcPath(0, endHour, color, index + 'b', type)}
+                        </g>
+                    );
+                }
+                return createArcPath(startHour, endHour, color, index, type);
+            };
+
+            const createArcPath = (startHour, endHour, color, key, type) => {
+                const startAngle = (startHour / 24) * 360;
+                const endAngle = (endHour / 24) * 360;
+                const startRad = (startAngle - 90) * (Math.PI / 180);
+                const endRad = (endAngle - 90) * (Math.PI / 180);
+
+                const x1 = center + radius * Math.cos(startRad);
+                const y1 = center + radius * Math.sin(startRad);
+                const x2 = center + radius * Math.cos(endRad);
+                const y2 = center + radius * Math.sin(endRad);
+                const x3 = center + innerRadius * Math.cos(endRad);
+                const y3 = center + innerRadius * Math.sin(endRad);
+                const x4 = center + innerRadius * Math.cos(startRad);
+                const y4 = center + innerRadius * Math.sin(startRad);
+
+                const largeArcFlag = endAngle - startAngle <= 180 ? "0" : "1";
+                const d = `M ${x1} ${y1} A ${radius} ${radius} 0 ${largeArcFlag} 1 ${x2} ${y2} L ${x3} ${y3} A ${innerRadius} ${innerRadius} 0 ${largeArcFlag} 0 ${x4} ${y4} Z`;
+
+                let opacityClass = "opacity-80 hover:opacity-100";
+                let strokeColor = "#111827";
+                let strokeWidth = "2";
+
+                if (highlightedType) {
+                    if (highlightedType === type) {
+                        opacityClass = "opacity-100 brightness-110 drop-shadow-[0_0_3px_rgba(255,255,255,0.3)]";
+                        strokeColor = "#fff";
+                        strokeWidth = "1";
+                    } else {
+                        opacityClass = "opacity-10 grayscale";
+                    }
+                }
+
+                return (
+                    <path
+                        key={key}
+                        d={d}
+                        fill={color}
+                        stroke={strokeColor}
+                        strokeWidth={strokeWidth}
+                        className={`transition-all duration-300 ${opacityClass}`}
+                    >
+                        <title>{`${startHour}h - ${endHour}h`}</title>
+                    </path>
+                );
+            };
+
+            const renderMarkers = () => {
+                const markers = [];
+                for (let i = 0; i < 24; i++) {
+                    if (i % 2 !== 0) continue;
+                    const angle = (i / 24) * 360;
+                    const rad = (angle - 90) * (Math.PI / 180);
+                    const textRadius = radius + 20;
+                    const x = center + textRadius * Math.cos(rad);
+                    const y = center + textRadius * Math.sin(rad);
+
+                    const lineInnerX = center + innerRadius * Math.cos(rad);
+                    const lineInnerY = center + innerRadius * Math.sin(rad);
+                    const lineOuterX = center + radius * Math.cos(rad);
+                    const lineOuterY = center + radius * Math.sin(rad);
+
+                    markers.push(
+                        <g key={i}>
+                            <text
+                                x={x} y={y}
+                                textAnchor="middle" dominantBaseline="middle"
+                                className={`fill-gray-400 text-xs font-semibold transition-opacity duration-300 ${highlightedType ? 'opacity-40' : 'opacity-100'}`}
+                            >
+                                {i}h
+                            </text>
+                            <line
+                                x1={lineInnerX} y1={lineInnerY} x2={lineOuterX} y2={lineOuterY}
+                                stroke="#374151" strokeWidth="1" opacity="0.3"
+                            />
+                        </g>
+                    );
+                }
+                return markers;
+            };
+
+            return (
+                <div className="flex justify-center items-center p-4">
+                    <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`}>
+                        <circle cx={center} cy={center} r={radius} fill="#1f2937" stroke="#374151" strokeWidth="1" />
+                        <circle cx={center} cy={center} r={innerRadius} fill="#111827" stroke="#374151" strokeWidth="1" />
+                        {zones.map((zone, idx) => {
+                            const { start, end } = parseTime(zone.time);
+                            return createArc(start, end, ZONE_COLORS[zone.type], idx, zone.type);
+                        })}
+                        {renderMarkers()}
+                        <text x={center} y={center} textAnchor="middle" dominantBaseline="middle" className="fill-white text-sm font-bold opacity-50">24h</text>
+                    </svg>
+                </div>
+            );
+        };
+
+        // --- ZoneTimeline Component ---
+        const ZoneTimeline = ({ zones, highlightedType }) => {
+            const getHourData = (hour) => {
+                const activeZone = zones.find(z => {
+                    const parts = z.time.split('-').map(p => parseInt(p.trim(), 10));
+                    let start = parts[0];
+                    let end = parts[1];
+                    if (end < start) return hour >= start || hour < end;
+                    return hour >= start && hour < end;
+                });
+                return activeZone ? {
+                    color: ZONE_COLORS[activeZone.type],
+                    label: ZONE_LABELS[activeZone.type],
+                    time: activeZone.time,
+                    type: activeZone.type
+                } : null;
+            };
+
+            const renderRow = (startHour, endHour, label) => {
+                const hours = Array.from({ length: endHour - startHour }, (_, i) => startHour + i);
+
+                return (
+                    <div className="mb-6 last:mb-0">
+                        <div className="flex justify-between items-end mb-1 px-1">
+                            <span className="text-xs font-semibold text-gray-400">{label}</span>
+                        </div>
+                        <div className="flex justify-between px-px mb-1">
+                            {hours.map(h => (
+                                <div key={h} className="w-full relative h-3 border-l border-gray-700/50">
+                                    <span className={`absolute -top-1 -left-1.5 text-[10px] font-mono transition-colors ${highlightedType ? 'text-gray-700' : 'text-gray-500'}`}>{h}</span>
+                                </div>
+                            ))}
+                            <div className="w-0 relative h-3 border-l border-gray-700/50">
+                                <span className={`absolute -top-1 -left-1.5 text-[10px] font-mono transition-colors ${highlightedType ? 'text-gray-700' : 'text-gray-500'}`}>{endHour === 24 ? '00' : endHour}</span>
+                            </div>
+                        </div>
+                        <div className="flex h-12 rounded-lg overflow-hidden border border-gray-700 bg-gray-900/80 shadow-inner">
+                            {hours.map(hour => {
+                                const data = getHourData(hour);
+                                let cellClass = "flex-1 border-r border-gray-800/50 last:border-r-0 relative group transition-all duration-300";
+                                if (data) {
+                                    if (highlightedType && highlightedType !== data.type) {
+                                        cellClass += " opacity-20 grayscale filter";
+                                    } else if (highlightedType && highlightedType === data.type) {
+                                        cellClass += " brightness-110 z-10 ring-1 ring-inset ring-white/20";
+                                    } else {
+                                        cellClass += " hover:brightness-110";
+                                    }
+                                }
+                                return (
+                                    <div key={hour} className={cellClass} style={{ backgroundColor: data ? data.color : 'transparent' }}>
+                                        {data && (!highlightedType || highlightedType === data.type) && (
+                                            <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 hidden group-hover:block z-20 w-max pointer-events-none">
+                                                <div className="bg-gray-800 text-white text-xs rounded px-2 py-1 shadow-lg border border-gray-600">
+                                                    <div className="font-bold text-center border-b border-gray-700 pb-1 mb-1">{data.label}</div>
+                                                    <div className="text-center font-mono">{data.time}h</div>
+                                                </div>
+                                                <div className="w-2 h-2 bg-gray-800 rotate-45 absolute left-1/2 -translate-x-1/2 -bottom-1 border-b border-r border-gray-600"></div>
+                                            </div>
+                                        )}
+                                    </div>
+                                );
+                            })}
+                        </div>
+                    </div>
+                );
+            };
+
+            return (
+                <div className="w-full py-2">
+                    {renderRow(0, 12, 'Manhã (00h - 12h)')}
+                    {renderRow(12, 24, 'Tarde/Noite (12h - 00h)')}
+                </div>
+            );
+        };
+
+        // --- Main App Component ---
+        const App = () => {
+            const [speciesList, setSpeciesList] = React.useState(MOCK_SPECIES);
+            const [mapsList, setMapsList] = React.useState(MOCK_MAPS);
+            const [selectedAnimalId, setSelectedAnimalId] = React.useState(MOCK_SPECIES[0].id);
+            const [viewMode, setViewMode] = React.useState('timeline');
+            const [highlightedType, setHighlightedType] = React.useState(null);
+
+            const selectedAnimalData = React.useMemo(() => {
+                if (!selectedAnimalId) return null;
+                const animal = speciesList.find(s => s.id === selectedAnimalId);
+                if (!animal) return null;
+
+                const grouped = [];
+                const mapIds = Array.from(new Set(animal.needZones.map(z => z.mapId)));
+
+                mapIds.forEach(mapId => {
+                    const mapObj = mapsList.find(m => m.id === mapId);
+                    const zones = animal.needZones.filter(z => z.mapId === mapId);
+                    if (mapObj && zones.length > 0) {
+                        grouped.push({
+                            mapName: mapObj.name,
+                            zones: zones.sort((a, b) => parseInt(a.time) - parseInt(b.time))
+                        });
+                    }
+                });
+
+                return { name: animal.id, schedules: grouped };
+            }, [selectedAnimalId, speciesList, mapsList]);
+
+            const toggleHighlight = (type) => {
+                setHighlightedType(prev => prev === type ? null : type);
+            };
+
+            return (
+                <div className="min-h-screen bg-gray-900 text-gray-100 p-4 md:p-8">
+                    <div className="max-w-6xl mx-auto space-y-8">
+                        {/* Header */}
+                        <div className="flex flex-col md:flex-row justify-between items-center gap-4 border-b border-gray-800 pb-6">
+                            <div>
+                                <h1 className="text-3xl font-bold bg-gradient-to-r from-green-400 to-emerald-600 bg-clip-text text-transparent">
+                                    COTW Need Zones
+                                </h1>
+                                <p className="text-gray-400 mt-1 text-sm">Standalone Viewer</p>
+                            </div>
+                            <div className="relative w-full md:w-80">
+                                <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-gray-500">
+                                    <Icons.Search />
+                                </div>
+                                <select
+                                    value={selectedAnimalId}
+                                    onChange={(e) => setSelectedAnimalId(e.target.value)}
+                                    className="block w-full pl-10 pr-4 py-2.5 bg-gray-800 border border-gray-700 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent text-white appearance-none cursor-pointer"
+                                >
+                                    {speciesList.map(s => <option key={s.id} value={s.id}>{s.id}</option>)}
+                                </select>
+                            </div>
+                        </div>
+
+                        {selectedAnimalData ? (
+                            <div className="space-y-6">
+                                {/* Controls */}
+                                <div className="flex justify-between items-center">
+                                    <h2 className="text-2xl font-semibold text-white">{selectedAnimalData.name}</h2>
+                                    <div className="flex bg-gray-800 p-1 rounded-lg border border-gray-700">
+                                        <button onClick={() => setViewMode('timeline')} className={`flex items-center gap-2 px-3 py-1.5 rounded-md text-sm font-medium transition-all ${viewMode === 'timeline' ? 'bg-gray-700 text-white shadow-sm' : 'text-gray-400 hover:text-white'}`}>
+                                            <Icons.BarChart /> Timeline
+                                        </button>
+                                        <button onClick={() => setViewMode('clock')} className={`flex items-center gap-2 px-3 py-1.5 rounded-md text-sm font-medium transition-all ${viewMode === 'clock' ? 'bg-gray-700 text-white shadow-sm' : 'text-gray-400 hover:text-white'}`}>
+                                            <Icons.Clock /> Relógio
+                                        </button>
+                                    </div>
+                                </div>
+
+                                {/* Legend */}
+                                <div className="bg-gray-800/50 p-4 rounded-xl border border-gray-700/50">
+                                    <div className="flex items-center gap-2 mb-3 text-xs text-gray-500 font-medium uppercase tracking-wider">
+                                        <Icons.Filter /> Filtros de Legenda
+                                    </div>
+                                    <div className="flex flex-wrap gap-3">
+                                        {Object.values(ZoneType).map((type) => {
+                                            const isSelected = highlightedType === type;
+                                            const isDimmed = highlightedType && !isSelected;
+                                            return (
+                                                <button
+                                                    key={type}
+                                                    onClick={() => toggleHighlight(type)}
+                                                    className={`flex items-center gap-2 px-3 py-2 rounded-lg border transition-all duration-300 ${isSelected ? 'bg-gray-700 border-gray-500 shadow-md ring-1 ring-white/10' : 'bg-transparent border-transparent hover:bg-gray-700/50'} ${isDimmed ? 'opacity-30 grayscale' : 'opacity-100'}`}
+                                                >
+                                                    <span className={`w-3 h-3 rounded-full shadow-sm transition-transform ${isSelected ? 'scale-125' : ''}`} style={{ backgroundColor: ZONE_COLORS[type] }}></span>
+                                                    <span className={`${isSelected ? 'text-white font-semibold' : 'text-gray-300'}`}>{ZONE_LABELS[type]}</span>
+                                                </button>
+                                            );
+                                        })}
+                                    </div>
+                                </div>
+
+                                {/* Cards */}
+                                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-2 gap-6">
+                                    {selectedAnimalData.schedules.map((schedule) => (
+                                        <div key={schedule.mapName} className="bg-gray-800/40 backdrop-blur-sm border border-gray-700 rounded-xl p-6 shadow-xl flex flex-col transition-all hover:border-gray-600">
+                                            <h3 className="text-lg font-medium text-green-400 mb-4">{schedule.mapName}</h3>
+                                            <div className="flex-grow flex items-center justify-center min-h-[200px] bg-gray-900/50 rounded-lg border border-gray-800/50 p-4">
+                                                {viewMode === 'clock' ? (
+                                                    <ZoneClock zones={schedule.zones} size={260} highlightedType={highlightedType} />
+                                                ) : (
+                                                    <ZoneTimeline zones={schedule.zones} highlightedType={highlightedType} />
+                                                )}
+                                            </div>
+                                            <div className="mt-6 space-y-2">
+                                                {schedule.zones.map((zone, idx) => {
+                                                    const isDimmed = highlightedType && highlightedType !== zone.type;
+                                                    return (
+                                                        <div key={idx} className={`flex justify-between items-center p-2 rounded border transition-all duration-300 ${isDimmed ? 'opacity-20 grayscale border-transparent' : ZONE_BG_CLASSES[zone.type]}`}>
+                                                            <span className="font-medium flex items-center gap-2"><Icons.Info /> {ZONE_LABELS[zone.type]}</span>
+                                                            <span className="font-mono font-bold tracking-wider">{zone.time}h</span>
+                                                        </div>
+                                                    )
+                                                })}
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+                        ) : null}
+                    </div>
+                </div>
+            );
+        };
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+
+</html>
