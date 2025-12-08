@@ -862,15 +862,6 @@ export const Dashboard = () => {
                                                 </button>
                                             </div>
 
-                                            {/* Need Zones Button */}
-                                            <button
-                                                onClick={() => setShowNeedZonesPanel(true)}
-                                                title="Ver Horários de Necessidades"
-                                                className="py-1.5 px-2 text-[9px] font-bold border border-green-600/50 bg-gradient-to-r from-green-900/20 to-emerald-900/20 text-green-300 hover:bg-gradient-to-r hover:from-green-600 hover:to-emerald-600 hover:text-white hover:border-green-400 hover:shadow-[0_0_20px_rgba(34,197,94,0.4)] transition-colors rounded-sm flex items-center justify-center gap-1 active:scale-[0.98]"
-                                            >
-                                                <i className="fa-solid fa-clock text-sm"></i>
-                                                <span className="tracking-[0.15em]">HORÁRIOS</span>
-                                            </button>
 
                                             {/* Session Date with Two Buttons */}
                                             <div className="mt-2 pt-2 border-t border-white/10">

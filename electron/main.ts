@@ -38,7 +38,7 @@ function createWindow() {
         frame: false, // Remove native borders as requested
         // transparent: true, // DISABLED temporarily for debugging
         backgroundColor: '#1c1917', // stone-900
-        icon: path.join(process.env.VITE_PUBLIC, 'electron-vite.svg'),
+        icon: path.join(__dirname, '../build/icon.ico'),
         webPreferences: {
             preload: path.join(__dirname, 'preload.mjs'),
             nodeIntegration: false,

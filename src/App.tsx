@@ -52,7 +52,7 @@ function App() {
         <Route path="/dashboard" element={user ? <Dashboard /> : <Navigate to="/login" />} />
         <Route path="/overlay" element={<Overlay />} />
         <Route path="/guide" element={<UserGuide />} />
-        <Route path="/need-zones" element={<NeedZonesPanel show={true} onClose={() => window.close()} />} />
+        <Route path="/need-zones/:position" element={<NeedZonesPanel show={true} onClose={() => window.close()} />} />
         <Route path="/" element={<Navigate to={user ? "/dashboard" : "/login"} />} />
       </Routes>
     </HashRouter>

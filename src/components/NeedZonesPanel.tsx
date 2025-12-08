@@ -138,10 +138,9 @@ export function NeedZonesPanel({ show, onClose }: NeedZonesPanelProps) {
 
     return (
         <div
-            className="fixed top-0 right-0 h-full w-[520px] bg-stone-950 shadow-2xl overflow-y-auto z-50"
+            className="h-screen w-full bg-stone-950 flex flex-col overflow-hidden"
             style={{
-                transform: show ? 'translateX(0)' : 'translateX(100%)',
-                transition: 'transform 0.3s ease-out'
+                display: show ? 'flex' : 'none'
             }}
         >
             {/* Title Bar - Orange like Dashboard */}
