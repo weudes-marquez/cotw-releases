@@ -2,6 +2,8 @@ import { HashRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { Login } from './components/Login';
 import { Dashboard } from './components/Dashboard';
 import { Overlay } from './components/Overlay';
+import { UserGuide } from './components/UserGuide';
+import { NeedZonesPanel } from './components/NeedZonesPanel';
 import { useEffect, useState } from 'react';
 import { auth } from './firebase';
 import { onAuthStateChanged } from 'firebase/auth';
@@ -11,9 +13,9 @@ function App() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    console.log('🔐 Setting up auth listener...');
+
     const unsubscribe = onAuthStateChanged(auth, (user) => {
-      console.log('🔐 Auth state changed:', user ? `Logged in as ${user.email}` : 'Not logged in');
+
       setUser(user);
       setLoading(false);
     });
@@ -21,7 +23,7 @@ function App() {
   }, []);
 
   if (loading) {
-    console.log('⏳ App is loading...');
+
     return (
       <div style={{
         width: '100%',
@@ -41,7 +43,7 @@ function App() {
     );
   }
 
-  console.log('✅ App rendered. User:', user ? user.email : 'null');
+
 
   return (
     <HashRouter>
@@ -49,6 +51,8 @@ function App() {
         <Route path="/login" element={!user ? <Login /> : <Navigate to="/dashboard" />} />
         <Route path="/dashboard" element={user ? <Dashboard /> : <Navigate to="/login" />} />
         <Route path="/overlay" element={<Overlay />} />
+        <Route path="/guide" element={<UserGuide />} />
+        <Route path="/need-zones" element={<NeedZonesPanel show={true} onClose={() => window.close()} />} />
         <Route path="/" element={<Navigate to={user ? "/dashboard" : "/login"} />} />
       </Routes>
     </HashRouter>

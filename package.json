@@ -1,34 +1,59 @@
 {
-  "name": "cotwelectron",
+  "name": "cotwgrindcounter",
   "private": true,
-  "version": "0.0.0",
+  "version": "1.0.0",
+  "type": "module",
   "main": "dist-electron/main.js",
   "scripts": {
     "dev": "vite",
-    "build": "tsc -b && vite build && electron-builder",
-    "build:win": "tsc -b && vite build && electron-builder --win",
+    "dev:first": "vite build --mode development && vite",
+    "build": "vite build && electron-builder",
+    "build:win": "vite build && electron-builder --win",
+    "build:check": "tsc -b && vite build && electron-builder",
     "lint": "eslint .",
     "preview": "vite preview",
-    "electron:dev": "vite"
+    "electron:dev": "vite",
+    "release:patch": "npm version patch && yarn build",
+    "release:minor": "npm version minor && yarn build",
+    "release:major": "npm version major && yarn build"
   },
   "build": {
     "appId": "com.cotwpinplanner.grindcounter",
-    "productName": "COTW Pin Planner - Grind Counter",
-    "icon": "build/icon.png",
+    "productName": "COTW Grind Counter",
+    "executableName": "cotwgrindcounter",
     "directories": {
       "output": "release"
     },
     "files": [
       "dist/**/*",
-      "dist-electron/**/*"
+      "dist-electron/**/*",
+      "build/icon.ico"
+    ],
+    "extraResources": [
+      "public/**/*",
+      "build/icon.ico"
     ],
     "win": {
+      "icon": "build/icon.ico",
+      "forceCodeSigning": false,
       "target": [
-        "portable"
-      ],
-      "sign": false
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
     }
   },
+  "description": "A grind counter for theHunter: Call of the Wild",
+  "author": "Pin Planner",
   "dependencies": {
     "@supabase/supabase-js": "^2.39.0",
     "firebase": "^12.6.0",
@@ -45,11 +70,13 @@
     "@vitejs/plugin-react": "^5.1.1",
     "autoprefixer": "^10.4.22",
     "concurrently": "^9.2.1",
+    "dotenv": "^17.2.3",
     "electron": "^39.2.3",
     "electron-builder": "^26.0.12",
     "eslint": "^9.39.1",
     "eslint-plugin-react-hooks": "^7.0.1",
     "eslint-plugin-react-refresh": "^0.4.24",
+    "firebase-admin": "^13.6.0",
     "globals": "^16.5.0",
     "postcss": "^8.5.6",
     "tailwindcss": "^3.4.1",

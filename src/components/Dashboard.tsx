@@ -1,13 +1,18 @@
-import { useState, useEffect } from 'react';
+
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { auth } from '../firebase'; // Keep auth for now if still using Firebase Auth
 import { signOut } from 'firebase/auth';
 import { useNavigate } from 'react-router-dom';
-import { sanitizeText, sanitizeId } from '../utils/sanitize';
-import { useGrindSession, getSpecies, getFurTypes, authenticateWithFirebase, upsertUserProfile, getUserHistoricalStats } from '../supabase_integration';
+import { useGrindSession, getSpecies, getFurTypes, authenticateWithFirebase, upsertUserProfile, getUserHistoricalStats, deleteAllUserStats, getActiveSessions, trackUserActivity } from '../supabase_integration';
+import { HamburgerMenu, AboutModal, useFontSizeControl, ConfirmationModal } from './MenuComponents';
+import { NeedZonesModal } from './NeedZonesModal';
+import { NeedZonesPanel } from './NeedZonesPanel';
+import { MigrationModal } from './MigrationModal';
 
 interface Animal {
-    id: string;
-    Name: string;
+    id: number;
+    name_enus: string;
+    name_ptbr: string;
 }
 
 interface FurType {
@@ -16,46 +21,93 @@ interface FurType {
     imageURL: string;
 }
 
+// Helper to normalize text (remove accents) for search
+const normalizeText = (text: string): string => {
+    return text
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .toLowerCase();
+};
+
 export const Dashboard = () => {
     const [animals, setAnimals] = useState<Animal[]>([]);
     const [selectedAnimal, setSelectedAnimal] = useState<Animal | null>(null);
     const [loading, setLoading] = useState(true);
     const [historicalStats, setHistoricalStats] = useState<any[]>([]);
     const [showStats, setShowStats] = useState(false);
+    const [showNeedZones, setShowNeedZones] = useState(false);
     const [furTypes, setFurTypes] = useState<FurType[]>([]);
     const [showFurTypes, setShowFurTypes] = useState(false);
+    const [isAnimalDropdownOpen, setIsAnimalDropdownOpen] = useState(false);
     const [furTypeSearch, setFurTypeSearch] = useState('');
     const [selectedAnimalForStats, setSelectedAnimalForStats] = useState<string | null>(null);
     const [statsSearch, setStatsSearch] = useState('');
+    const [animalSearch, setAnimalSearch] = useState('');
     const [showGrandTotal, setShowGrandTotal] = useState(false);
     const [showCurrentSession, setShowCurrentSession] = useState(false);
-    const [_selectedFurType, setSelectedFurType] = useState<FurType | null>(null);
+    const [activeSessions, setActiveSessions] = useState<any[]>([]);
+
+    const [showMenu, setShowMenu] = useState(false);
+    const [showAbout, setShowAbout] = useState(false);
+    const [showNeedZonesPanel, setShowNeedZonesPanel] = useState(false);
+    const [showMigration, setShowMigration] = useState(false);
+
+
+    // Confirmation Modal State
+    const [confirmModal, setConfirmModal] = useState<{
+        show: boolean;
+        title: string;
+        message: string;
+        confirmText?: string;
+        confirmColor?: 'red' | 'yellow' | 'blue';
+        onConfirm: () => void;
+    }>({
+        show: false,
+        title: '',
+        message: '',
+        onConfirm: () => { }
+    });
+    const [fontSize, setFontSize] = useState(1.0);
+    const [grindActive, setGrindActive] = useState(false);
+    const [animalTotalKills, setAnimalTotalKills] = useState(0); // Total kills for the animal (Grind Total)
+    const [_selectedFurType, _setSelectedFurType] = useState<FurType | null>(null);
     const [startDate] = useState(new Date().toLocaleDateString('pt-BR'));
+    const [isRetracted, setIsRetracted] = useState(false);
+    const [showNeonEffect, setShowNeonEffect] = useState(false);
     const navigate = useNavigate();
 
     const [user, setUser] = useState(auth.currentUser);
+
+    // Resize window to compact mode (360x520) when Dashboard loads
+    useEffect(() => {
+        if ((window as any).ipcRenderer) {
+            (window as any).ipcRenderer.send('resize-window', 360, 520);
+        }
+    }, []);
 
     useEffect(() => {
         const unsubscribe = auth.onAuthStateChanged(async (u) => {
             setUser(u);
             if (u) {
                 try {
-                    // 1. Criar perfil do usuário primeiro (CRITICAL)
+                    // 1. Tentar autenticação segura no Supabase PRIMEIRO
+                    // Isso garante que temos um auth.uid() válido para o RLS
+                    const token = await u.getIdToken();
+                    const success = await authenticateWithFirebase(token);
+
+                    if (!success) {
+                        console.warn('⚠️ Autenticação Supabase falhou (RLS pode bloquear operações)');
+                    } else {
+                        console.log('✅ Autenticado com segurança no Supabase');
+                    }
+
+                    // 2. Criar perfil do usuário DEPOIS de autenticar
                     await upsertUserProfile(
                         u.uid,
                         u.email || '',
                         u.displayName || u.email || 'Usuário'
                     );
                     console.log('✅ Perfil de usuário criado/atualizado');
-
-                    // 2. Tentar autenticação segura (opcional, pode falhar)
-                    const token = await u.getIdToken();
-                    const success = await authenticateWithFirebase(token);
-                    if (!success) {
-                        console.warn('⚠️ Autenticação Edge Function falhou (RLS pode bloquear)');
-                    } else {
-                        console.log('✅ Autenticado com segurança no Supabase');
-                    }
                 } catch (err) {
                     console.error('Erro ao configurar usuário:', err);
                 }
@@ -64,31 +116,133 @@ export const Dashboard = () => {
         return () => unsubscribe();
     }, []);
 
-    // Hook de persistência
-    const { session, stats, loading: sessionLoading, addKill, removeLastKill, finishCurrentSession } = useGrindSession(
+    // Hook de persistência (só cria sessão quando grindActive=true)
+    const { session, stats, loading: sessionLoading, addKill: addKillBase, removeLastKill: removeLastKillBase, finishCurrentSession, reload: reloadSession } = useGrindSession(
         user?.uid,
-        selectedAnimal?.id || '',
-        selectedAnimal?.Name || ''
+        selectedAnimal ? String(selectedAnimal.id) : '',
+        selectedAnimal?.name_ptbr || '',
+        grindActive  // Só cria sessão quando grind está ativo
     );
 
+    // Wrapper para addKill
+    const addKill = useCallback(async (isDiamond = false, isGreatOne = false, furTypeId?: string, furTypeName?: string) => {
+        console.log('🔵 addKill CALLED', { isDiamond, isGreatOne, furTypeId });
+
+        // Trigger celebration if Great One
+        if (isGreatOne) {
+            triggerGreatOneCelebration();
+        }
+
+        // Optimistic update for total kills
+        setAnimalTotalKills(prev => {
+            console.log('🔵 setAnimalTotalKills:', prev, '->', prev + 1);
+            return prev + 1;
+        });
+
+        await addKillBase(isDiamond, isGreatOne, furTypeId, furTypeName);
+
+        // Refresh historical stats if panel is open to show new kill immediately
+        if (showStats && user) {
+            getUserHistoricalStats(user.uid).then(setHistoricalStats).catch(console.error);
+        }
+    }, [addKillBase, showStats, user]);
+
+    // Wrapper para removeLastKill
+    const removeLastKill = useCallback(async () => {
+        console.log('🔴 removeLastKill CALLED');
+
+        // Optimistic update for total kills
+        setAnimalTotalKills(prev => {
+            console.log('🔴 setAnimalTotalKills:', prev, '->', Math.max(0, prev - 1));
+            return Math.max(0, prev - 1);
+        });
+
+        await removeLastKillBase();
+    }, [removeLastKillBase]);
+
     const currentKillCount = session?.total_kills || 0;
+
+    // Voice Commands Integration - DISABLED (causing crashes)
+    // const { isListening } = useVoiceCommands(voiceEnabled && grindActive, {
+    //     onIncrement: () => updateCounter(1),
+    //     onDecrement: () => updateCounter(-1),
+    //     onDiamond: () => {
+    //         if (confirm('Confirmar registro de DIAMANTE via voz?')) {
+    //             addKill(true);
+    //         }
+    //     },
+    //     onDiamondRare: async () => {
+    //         try {
+    //             const furTypesData = await getFurTypes(selectedAnimal?.id?.toString() || '');
+    //             setFurTypes(furTypesData);
+    //             setShowFurTypes(true);
+    //             (window as any).__isDiamondRare = true;
+    //         } catch (error) {
+    //             console.error('Erro ao buscar fur types:', error);
+    //         }
+    //     },
+    //     onGreatOne: () => {
+    //         if (confirm('🏆 Confirmar captura do GREAT ONE via voz?')) {
+    //             addKill(false, true);
+    //         }
+    //     }
+    // });
+
+    // Resize window for dashboard
+    useEffect(() => {
+        if ((window as any).ipcRenderer) {
+            (window as any).ipcRenderer.send('resize-window', 360, 520);
+        }
+    }, []);
+
+    // Tray state listener
+    useEffect(() => {
+        const handleTrayStateChanged = (_event: any, retracted: boolean) => {
+
+            setIsRetracted(retracted);
+            if (!retracted) {
+                // Trigger neon effect when expanding
+
+                setShowNeonEffect(true);
+                setTimeout(() => setShowNeonEffect(false), 1500);
+            }
+        };
+
+        (window as any).ipcRenderer?.on('tray-state-changed', handleTrayStateChanged);
+
+        return () => {
+            (window as any).ipcRenderer?.off('tray-state-changed', handleTrayStateChanged);
+        };
+    }, []);
+
+    // Toggle tray function
+    const toggleTray = () => {
+
+        (window as any).ipcRenderer?.send('toggle-tray');
+    };
 
     useEffect(() => {
         const fetchAnimals = async () => {
             try {
-                console.log('🦌 Fetching animals from Supabase...');
+
                 const data = await getSpecies();
 
                 const animalList: Animal[] = (data || []).map((a: any) => ({
                     id: a.id,
-                    Name: a.name // Já está em PT-BR na tabela
+                    name_enus: a.name_enus,
+                    name_ptbr: a.name_ptbr
                 }));
 
-                setAnimals(animalList);
+                // Remove duplicates by Portuguese name
+                const uniqueAnimals = animalList.filter((animal, index, self) =>
+                    index === self.findIndex((a) => a.name_ptbr === animal.name_ptbr)
+                );
 
-                if (animalList.length > 0) {
-                    setSelectedAnimal(animalList[0]);
-                }
+
+
+
+                setAnimals(uniqueAnimals);
+                // Don't auto-select first animal - user should choose
             } catch (error) {
                 console.error('❌ Error fetching animals:', error);
             } finally {
@@ -100,24 +254,70 @@ export const Dashboard = () => {
     }, []);
 
     const handleAnimalSelect = (e: React.ChangeEvent<HTMLSelectElement>) => {
-        const animalId = sanitizeId(e.target.value);
-        const animal = animals.find((a) => a.id === animalId);
+        const animalId = e.target.value;
+        const animal = animals.find((a) => String(a.id) === String(animalId));
         if (animal) {
             setSelectedAnimal(animal);
+            setGrindActive(false);
         }
     };
 
-    const updateCounter = (change: number) => {
+    // Fetch total kills for selected animal
+    useEffect(() => {
+        if (user && selectedAnimal) {
+            getUserHistoricalStats(user.uid).then(stats => {
+                const animalStat = stats.find(s => s.animal_id === String(selectedAnimal.id));
+                if (animalStat) {
+                    setAnimalTotalKills(animalStat.total_kills);
+                } else {
+                    setAnimalTotalKills(0);
+                }
+            }).catch(console.error);
+        }
+    }, [user, selectedAnimal]);
+
+    // Track user activity on mount
+    useEffect(() => {
+        if (user && user.email) {
+            // Pega a versão do package.json (ou hardcoded por enquanto)
+            const appVersion = '1.0.0';
+            trackUserActivity(user.uid, user.email, appVersion);
+        }
+    }, [user]);
+
+
+    const updateCounter = useCallback((change: number) => {
+        console.log('⚡ updateCounter CALLED with change:', change);
+
         if (change > 0) {
+            console.log('⚡ Calling addKill()');
             addKill();
         } else {
-            removeLastKill();
+
+            if (session) {
+                console.log('⚡ Calling removeLastKill()');
+                removeLastKill();
+            } else {
+                console.warn('⚠️ Cannot decrement: no active session');
+            }
         }
+    }, [addKill, removeLastKill, session]);
+
+    const resetCurrentSession = async () => {
+        // Encerra a sessão atual no banco
+        await finishCurrentSession();
+        // Inicia uma nova sessão imediatamente para o mesmo animal
+        await reloadSession();
     };
 
     const resetGrind = async () => {
-        if (window.confirm(`Deseja encerrar a contagem atual para ${selectedAnimal?.Name}?`)) {
-            await finishCurrentSession();
+        // Encerra TUDO - Apenas finaliza a sessão e sai do modo grind, mantendo histórico
+        await finishCurrentSession();
+        setGrindActive(false);
+        setAnimalTotalKills(0);
+        // Force refresh of active sessions
+        if (user) {
+            getActiveSessions(user.uid).then(setActiveSessions);
         }
     };
 
@@ -140,24 +340,26 @@ export const Dashboard = () => {
         }
     };
 
-    const handleFurTypeSelect = (furType: FurType) => {
-        // Sanitizar dados da pelagem antes de salvar
-        const sanitizedFurType = {
-            ...furType,
-            id: sanitizeId(furType.id),
-            name: sanitizeText(furType.name, 100),
-            imageURL: furType.imageURL
-        };
-        setSelectedFurType(sanitizedFurType);
+    const handleFurTypeSelect = async (furType: FurType) => {
+        const isDiamondRare = (window as any).__isDiamondRare || false;
 
-        // Registrar abate com pelagem rara
-        addKill(false, false, sanitizedFurType.id, sanitizedFurType.name);
+        // Limpa o flag
+        (window as any).__isDiamondRare = false;
+
+        // Se é diamante raro, registra como diamante + raro
+        if (isDiamondRare) {
+            await addKill(true, false, furType.id, furType.name);
+        } else {
+            // Pelagem rara normal (sem diamante)
+            await addKill(false, false, furType.id, furType.name);
+        }
 
         setShowFurTypes(false);
     };
 
     const filteredFurTypes = furTypes.filter(furType =>
-        furType.name.toLowerCase().includes(furTypeSearch.toLowerCase())
+        furTypeSearch === '' ||
+        normalizeText(furType.name).includes(normalizeText(furTypeSearch))
     );
 
     const handleLogout = async () => {
@@ -182,35 +384,114 @@ export const Dashboard = () => {
         setShowStats(!showStats);
     };
 
-    // Listen for global hotkeys from Electron (after all functions are defined)
+    // Auto-refresh stats when session changes (if stats panel is open)
+    useEffect(() => {
+        if (showStats && user) {
+            getUserHistoricalStats(user.uid).then(setHistoricalStats).catch(console.error);
+        }
+    }, [session?.total_kills, showStats, user]);
+
+    // Auto-refresh active sessions when session changes
+    useEffect(() => {
+        if (user) {
+            getActiveSessions(user.uid)
+                .then(setActiveSessions)
+                .catch(error => {
+                    console.error('Erro ao carregar sessões ativas:', error);
+                    setActiveSessions([]);
+                });
+        }
+    }, [session?.total_kills, user, session?.id]); // Atualizar quando kills ou sessão mudar
+
+    // Font size control
+    const { updateFontSize } = useFontSizeControl(fontSize, setFontSize);
+
+    const handleResetStats = async () => {
+        if (!user) return;
+        if (window.confirm('⚠️ ATENÇÃO: Isso vai DELETAR TODAS as suas estatísticas (sessões e abates). Tem certeza?')) {
+            try {
+                await deleteAllUserStats(user.uid);
+                alert('✅ Estatísticas resetadas com sucesso!');
+                window.location.reload();
+            } catch (error) {
+                console.error('Erro ao resetar estatísticas:', error);
+                alert('❌ Erro ao resetar estatísticas. Veja o console.');
+            }
+        }
+    };
+
+
+    // Listen for global hotkeys from Electron - NO DEPENDENCIES to prevent re-registration
     useEffect(() => {
         if (!window.ipcRenderer) return;
 
+        console.log('🔧 Registering IPC listeners...');
+        let callCount = 0;
+
         const handleIncrement = () => {
-            console.log('📩 Hotkey received: +1');
-            updateCounter(1);
+            callCount++;
+            console.log(`📨 IPC RECEIVED: hotkey-increment (call #${callCount})`);
+            (window as any).__hotkeyAddKill?.();
         };
 
         const handleDecrement = () => {
-            console.log('📩 Hotkey received: -1');
-            updateCounter(-1);
+            console.log('📨 IPC RECEIVED: hotkey-decrement');
+            (window as any).__hotkeyRemoveKill?.();
         };
 
         const handleStats = () => {
-            console.log('📩 Hotkey received: Open stats');
-            handleToggleStats();
+            console.log('📨 IPC RECEIVED: hotkey-stats');
+            (window as any).__hotkeyToggleStats?.();
         };
+
+        // IMPORTANT: Use 'once' instead of 'on' to prevent duplicate calls
+        window.ipcRenderer.removeAllListeners('hotkey-increment');
+        window.ipcRenderer.removeAllListeners('hotkey-decrement');
+        window.ipcRenderer.removeAllListeners('hotkey-stats');
 
         window.ipcRenderer.on('hotkey-increment', handleIncrement);
         window.ipcRenderer.on('hotkey-decrement', handleDecrement);
         window.ipcRenderer.on('hotkey-stats', handleStats);
 
+        console.log('✅ IPC listeners registered');
+
         return () => {
+            console.log('🧹 Cleaning up IPC listeners...');
             window.ipcRenderer.off('hotkey-increment', handleIncrement);
             window.ipcRenderer.off('hotkey-decrement', handleDecrement);
             window.ipcRenderer.off('hotkey-stats', handleStats);
         };
-    }, []); // Empty deps - functions are stable
+    }, []); // EMPTY DEPS - register only once
+
+    // Use refs to always have the latest functions without recreating window handlers
+    const updateCounterRef = useRef(updateCounter);
+    const handleToggleStatsRef = useRef(handleToggleStats);
+
+    // Keep refs updated
+    useEffect(() => {
+        updateCounterRef.current = updateCounter;
+        handleToggleStatsRef.current = handleToggleStats;
+    }, [updateCounter, handleToggleStats]);
+
+    // Expose stable handlers to window for hotkeys (only set once)
+    useEffect(() => {
+        console.log('🔧 Setting up window hotkey handlers (ONCE)');
+        (window as any).__hotkeyAddKill = () => {
+            console.log('🎯 __hotkeyAddKill EXECUTED');
+            updateCounterRef.current(1);
+        };
+        (window as any).__hotkeyRemoveKill = () => {
+            console.log('🎯 __hotkeyRemoveKill EXECUTED');
+            updateCounterRef.current(-1);
+        };
+        (window as any).__hotkeyToggleStats = () => handleToggleStatsRef.current();
+    }, []); // ONLY ONCE - handlers use refs to always get latest functions
+
+    // Great One Celebration
+    const triggerGreatOneCelebration = () => {
+        window.ipcRenderer.send('trigger-greatone-celebration');
+    };
+
 
     if (loading) {
         return (
@@ -224,534 +505,1054 @@ export const Dashboard = () => {
     }
 
     return (
-        <div className="w-full h-screen overflow-hidden bg-stone-950 text-gray-100 font-sans relative" style={{ margin: 0, padding: 0 }}>
+        // Background color removed (was bg-stone-950) to show image
+        <div className="w-full h-screen overflow-hidden text-gray-100 font-sans relative" style={{ margin: 0, padding: 0 }}>
             {/* Background Layers */}
             <div className="absolute inset-0 w-full h-full overflow-hidden z-0 pointer-events-none">
-                <div
-                    className="absolute inset-0 animate-ken-burns"
-                    style={{
-                        backgroundImage: 'url(https://images.unsplash.com/photo-1519331379826-f9686293dea8?q=80&w=2560&auto=format&fit=crop)',
-                        backgroundSize: 'cover',
-                        backgroundPosition: 'center'
-                    }}
-                ></div>
-                <div className="absolute inset-0 bg-gradient-to-b from-black/50 via-stone-900/70 to-black/95"></div>
-                <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,_var(--tw-gradient-stops))] from-transparent to-black opacity-80"></div>
+                {/* Gradient Background */}
+                <div className="absolute inset-0 bg-gradient-to-br from-stone-800 via-stone-950 to-black"></div>
+                {/* Vignette */}
+                <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,_var(--tw-gradient-stops))] from-transparent via-black/20 to-black/80"></div>
             </div>
+
+            {/* Animation Container for Great One Effects */}
+            <div id="animation-container" className="fixed inset-0 pointer-events-none z-[9999]" style={{ overflow: 'hidden' }}></div>
+
+            {/* Clickable Border When Retracted */}
+            {isRetracted && (
+                <div
+                    className="absolute left-0 top-0 w-6 h-full cursor-pointer z-[100] group"
+                    onClick={toggleTray}
+                    title="Clique para expandir (Alt+Shift+G)"
+                >
+                    <div className="absolute left-0 top-0 w-1 h-full bg-hunter-orange/80 group-hover:bg-hunter-orange group-hover:w-1.5  shadow-[0_0_10px_rgba(217,93,30,0.8)]" />
+                </div>
+            )}
 
             {/* Main Container */}
             <div className="relative z-10 flex items-center justify-center h-full">
                 {/* MAIN CARD CONTAINER */}
-                <div className="w-full h-full max-w-md glass-panel shadow-2xl relative overflow-hidden flex flex-col">
+                <div className={`w-full h-full max-w-md glass-panel shadow-2xl relative overflow-hidden flex flex-col ${isRetracted ? 'opacity-0 pointer-events-none' : 'opacity-100'} ${showNeonEffect ? 'neon-border-active' : ''} `}>
                     {/* Decorative Top Line */}
                     <div className="absolute top-0 left-0 w-full h-1 bg-hunter-orange shadow-[0_0_10px_rgba(217,93,30,0.5)] z-20"></div>
 
-                    {/* Stats Button (Top Right Overlay) */}
-                    <div className="absolute top-3 right-3 z-30">
+                    {/* Hero Section (Draggable) */}
+                    <div
+                        className="relative h-8 w-full shrink-0 overflow-hidden border-b border-hunter-orange/50 bg-gradient-to-r from-hunter-orange/90 to-orange-600/80 flex items-center justify-between px-2"
+                        style={{ WebkitAppRegion: 'drag' } as any}
+                    >
+                        {/* Hamburger Menu Button (No Drag) */}
                         <button
-                            onClick={handleToggleStats}
-                            className="w-8 h-8 rounded-full bg-black/60 border border-white/20 text-stone-300 hover:text-hunter-orange hover:border-hunter-orange transition-all flex items-center justify-center backdrop-blur-md shadow-lg"
+                            onClick={() => setShowMenu(true)}
+                            className="w-6 h-6 flex items-center justify-center text-stone-950 hover:bg-stone-950/20 rounded "
+                            title="Menu"
+                            style={{ WebkitAppRegion: 'no-drag' } as any}
                         >
-                            <i className="fa-solid fa-chart-column text-sm"></i>
+                            <i className="fa-solid fa-bars text-sm"></i>
                         </button>
-                    </div>
 
-                    {/* Hero Section */}
-                    <div className="relative h-12 w-full shrink-0 overflow-hidden border-b border-hunter-orange/50">
-                        <img
-                            src="https://images.unsplash.com/photo-1474511320723-9a56873867b5?q=80&w=2072&auto=format&fit=crop"
-                            alt="Target Animal"
-                            className="w-full h-full object-cover opacity-80 transition-opacity duration-500"
-                        />
-                        <div className="absolute inset-0 bg-gradient-to-t from-stone-900 via-transparent to-black/40"></div>
+                        {/* Title (Centered) */}
+                        <span className="text-[10px] font-bold text-stone-950 uppercase tracking-widest pointer-events-none select-none">
+                            Grind Counter
+                        </span>
 
-                        {/* Title Overlay */}
-                        <div className="absolute bottom-0.5 left-2 text-white">
-                            <h2 className="font-serif text-xs font-bold leading-tight text-shadow">Pin Planner Grind Counter</h2>
+                        {/* Right Controls (Stats + Close) */}
+                        <div className="flex items-center gap-2" style={{ WebkitAppRegion: 'no-drag' } as any}>
+                            {/* Stats Button */}
+                            <button
+                                onClick={() => setShowStats(!showStats)}
+                                title="Estatísticas (Ctrl+Shift+S)"
+                                className="w-6 h-6 rounded-full bg-black/20 border border-stone-950/10 text-stone-950 hover:text-white hover:bg-stone-950  flex items-center justify-center"
+                            >
+                                <i className="fa-solid fa-chart-column text-xs"></i>
+                            </button>
+
+                            {/* Need Zones Button */}
+                            <button
+                                onClick={() => window.ipcRenderer.send('open-need-zones')}
+                                title="Horários de Necessidades"
+                                className="w-6 h-6 rounded-full bg-green-600/80 border border-green-500/50 text-white hover:bg-green-700 flex items-center justify-center"
+                            >
+                                <i className="fa-solid fa-clock text-xs"></i>
+                            </button>
+
+                            {/* Botão de Toggle Bandeja */}
+                            <button
+                                onClick={toggleTray}
+                                className="w-6 h-6 rounded-full bg-black/20 border border-stone-950/10 text-stone-950 hover:text-white hover:bg-stone-950  flex items-center justify-center"
+                                title={isRetracted ? 'Expandir bandeja' : 'Retrair bandeja'}
+                            >
+                                <i className={`fa-solid ${isRetracted ? 'fa-angles-left' : 'fa-angles-right'} text-xs`}></i>
+                            </button>
+
+                            {/* Close App Button */}
+                            <button
+                                onClick={() => window.close()}
+                                title="Fechar Aplicativo"
+                                className="w-6 h-6 rounded hover:bg-red-500 hover:text-white text-stone-950  flex items-center justify-center"
+                            >
+                                <i className="fa-solid fa-xmark text-sm"></i>
+                            </button>
                         </div>
                     </div>
 
                     {/* Scrollable Content Area */}
-                    <div className="flex-1 overflow-y-auto p-3 space-y-3 bg-gradient-to-b from-stone-900 to-stone-950">
-                        {/* Animal Selector Menu */}
-                        <div className="relative group">
-                            <label className="block text-[8px] uppercase tracking-widest text-stone-500 mb-1 font-bold">
-                                Alvo da Caçada
-                            </label>
-                            <div className="relative">
-                                <select
-                                    value={selectedAnimal?.id || ''}
-                                    onChange={handleAnimalSelect}
-                                    className="appearance-none w-full bg-stone-800 border border-stone-600 hover:border-hunter-orange text-white py-1 px-2 pr-6 rounded-none focus:outline-none focus:ring-1 focus:ring-hunter-orange transition-colors font-serif text-xs cursor-pointer"
-                                >
-                                    {animals.map((animal) => (
-                                        <option key={animal.id} value={animal.id}>
-                                            {animal.Name}
-                                        </option>
-                                    ))}
-                                </select>
-                                <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center px-2 text-hunter-orange">
-                                    <i className="fa-solid fa-caret-down text-xs"></i>
-                                </div>
-                            </div>
-                        </div>
-
-                        {/* The Grind Counter */}
-                        <div className="bg-stone-800/30 border border-white/5 p-3 rounded-sm relative overflow-hidden">
-                            {/* Background texture */}
-                            <div className="absolute top-1 right-1 p-0 opacity-10 pointer-events-none">
-                                <i className="fa-solid fa-crosshairs text-3xl"></i>
-                            </div>
-
-                            <div className="flex items-center justify-between mb-3 relative z-10">
-                                <button
-                                    onClick={() => updateCounter(-1)}
-                                    className="w-7 h-7 rounded-sm border border-stone-600 text-stone-400 hover:border-red-500 hover:text-red-500 hover:bg-red-500/10 transition-all active:scale-95 flex items-center justify-center text-xs"
-                                >
-                                    <i className="fa-solid fa-minus"></i>
-                                </button>
-
-                                <div className="text-center">
-                                    <span
-                                        className="block text-4xl font-sans font-bold text-white drop-shadow-[0_0_10px_rgba(255,255,255,0.2)] transition-transform duration-100"
-                                    >
-                                        {sessionLoading ? (
-                                            <i className="fa-solid fa-circle-notch fa-spin text-sm text-stone-500"></i>
-                                        ) : (
-                                            currentKillCount
-                                        )}
-                                    </span>
-                                    <span className="text-[10px] uppercase tracking-[0.3em] text-stone-500">Abates</span>
-                                </div>
-
-                                <button
-                                    onClick={() => updateCounter(1)}
-                                    className="w-7 h-7 rounded-sm border border-stone-600 text-stone-400 hover:border-hunter-orange hover:text-hunter-orange hover:bg-hunter-orange/10 transition-all active:scale-95 flex items-center justify-center text-xs"
-                                >
-                                    <i className="fa-solid fa-plus"></i>
-                                </button>
-                            </div>
-
-                            {/* Extra Toggles & GREAT ONE */}
-                            <div className="space-y-2 relative z-10">
-                                {/* Row 1: Standard Rares */}
-                                <div className="grid grid-cols-2 gap-2">
-                                    <button
-                                        onClick={() => addKill(true)}
-                                        className="py-1 px-2 text-[8px] font-bold border border-stone-600 bg-stone-900/50 text-stone-400 hover:text-blue-300 hover:border-blue-400 transition-colors rounded-sm flex items-center justify-center gap-1 active:bg-blue-900/20"
-                                    >
-                                        <i className="fa-regular fa-gem"></i> DIAMANTE
-                                    </button>
-                                    <button
-                                        onClick={fetchFurTypes}
-                                        className="py-1 px-2 text-[8px] font-bold border border-stone-600 bg-stone-900/50 text-stone-400 hover:text-purple-300 hover:border-purple-400 transition-colors rounded-sm flex items-center justify-center gap-1 active:bg-purple-900/20"
-                                    >
-                                        <i className="fa-solid fa-star"></i> RARO
-                                    </button>
-                                </div>
-
-                                {/* Row 2: THE GREAT ONE */}
-                                <button
-                                    onClick={() => addKill(false, true)}
-                                    className="w-full py-1.5 px-2 text-[9px] font-bold border border-yellow-600/50 bg-gradient-to-r from-yellow-900/20 via-yellow-800/10 to-yellow-900/20 text-go-gold hover:bg-go-gold hover:text-black hover:border-go-gold hover:shadow-[0_0_20px_rgba(251,191,36,0.4)] transition-all duration-300 rounded-sm flex items-center justify-center gap-1 group animate-pulse-gold active:scale-[0.98]"
-                                >
-                                    <i className="fa-solid fa-crown text-xs group-hover:animate-bounce"></i>
-                                    <span className="tracking-[0.15em]">GREAT ONE</span>
-                                    <i className="fa-solid fa-crown text-xs group-hover:animate-bounce"></i>
-                                </button>
-
-                                {/* Session Date */}
-                                <div className="mt-2 pt-2 border-t border-white/10 text-center">
-                                    <p className="text-[7px] uppercase text-stone-500 tracking-wider">Início do Grind</p>
-                                    <p className="text-stone-300 font-mono text-[9px]">{startDate}</p>
-                                </div>
-                            </div>
-                        </div>
-
-                        {/* Action Buttons */}
-                        <div className="grid grid-cols-2 gap-1.5 border-t border-white/10 pt-1.5">
-                            <button
-                                onClick={resetGrind}
-                                className="py-0.5 px-1.5 text-[7px] font-bold border border-red-600 bg-red-900/20 text-red-400 hover:bg-red-600 hover:text-white transition-all rounded-sm flex items-center justify-center gap-0.5 active:scale-95"
-                            >
-                                <i className="fa-solid fa-xmark text-xs"></i>
-                                <span className="uppercase tracking-wide">Encerrar</span>
-                            </button>
-                            <button
-                                onClick={handleLogout}
-                                className="py-0.5 px-1.5 text-[7px] font-bold border border-stone-600 bg-stone-900/50 text-stone-400 hover:bg-hunter-orange hover:text-white hover:border-hunter-orange transition-all rounded-sm flex items-center justify-center gap-0.5 active:scale-95"
-                            >
-                                <i className="fa-solid fa-power-off text-xs"></i>
-                                <span className="uppercase tracking-wide">Sair</span>
-                            </button>
-                        </div>
-
-                        {/* Promo Footer */}
-                        <div className="mt-1.5 pt-1.5 border-t border-white/10 text-center">
-                            <p className="text-[9px] text-stone-500 mb-0.5">Conheça nosso outro app</p>
-                            <a
-                                href="https://cotwpinplanner.app"
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                className="text-hunter-orange hover:text-yellow-400 transition-colors text-[9px] font-bold tracking-wide"
-                            >
-                                COTW Pin Planner →
-                            </a>
-                        </div>
-                    </div>
-
-                    {/* STATS MODAL */}
-                    {showStats && (
-                        <div className="absolute inset-0 z-50 bg-stone-950/95 backdrop-blur-md flex flex-col animate-fade-in">
-                            <div className="p-2 border-b border-white/10 flex justify-between items-center bg-stone-900 shadow-lg">
-                                <h3 className="font-serif text-white uppercase tracking-wider text-xs">
-                                    <i className="fa-solid fa-chart-pie text-hunter-orange mr-2"></i> Estatísticas
-                                </h3>
-                                <button
-                                    onClick={() => setShowStats(false)}
-                                    className="text-stone-400 hover:text-white transition-colors w-7 h-7 flex items-center justify-center rounded-full hover:bg-white/10"
-                                >
-                                    <i className="fa-solid fa-xmark text-base"></i>
-                                </button>
-                            </div>
-
-                            <div className="flex-1 overflow-y-auto p-3 space-y-3">
-                                {/* Grand Total Statistics - All Species Combined */}
-                                {historicalStats.length > 0 && (
-                                    <div className="bg-gradient-to-r from-stone-900 to-stone-800 border-2 border-hunter-orange/50 rounded-sm overflow-hidden">
-                                        <div
-                                            className="p-3 cursor-pointer hover:bg-hunter-orange/5 transition-colors flex justify-between items-center"
-                                            onClick={() => setShowGrandTotal(!showGrandTotal)}
-                                        >
-                                            <h4 className="text-white uppercase text-sm font-bold flex items-center gap-2">
-                                                <i className="fa-solid fa-globe"></i> Total Geral
-                                            </h4>
-                                            <i className={`fa-solid fa-chevron-${showGrandTotal ? 'up' : 'down'} text-stone-400 text-xs`}></i>
-                                        </div>
-
-                                        {showGrandTotal && (
-                                            <div className="px-3 pb-3 animate-fade-in">
-                                                <div className="grid grid-cols-2 gap-2 text-xs">
-                                                    <div className="bg-black/30 p-2 rounded">
-                                                        <span className="text-stone-400 text-[10px] uppercase block">Total de Abates</span>
-                                                        <span className="text-white text-2xl font-bold">
-                                                            {historicalStats.reduce((sum, animal) => sum + animal.total_kills, 0)}
-                                                        </span>
-                                                    </div>
-                                                    <div className="bg-black/30 p-2 rounded">
-                                                        <span className="text-stone-400 text-[10px] uppercase block">Espécies Caçadas</span>
-                                                        <span className="text-hunter-orange text-2xl font-bold">
-                                                            {historicalStats.length}
-                                                        </span>
-                                                    </div>
-                                                    <div className="bg-black/30 p-2 rounded">
-                                                        <span className="text-stone-400 text-[10px] uppercase block">Diamantes</span>
-                                                        <span className="text-blue-400 text-lg font-bold">
-                                                            {historicalStats.reduce((sum, animal) => sum + animal.total_diamonds, 0)}
-                                                        </span>
-                                                    </div>
-                                                    <div className="bg-black/30 p-2 rounded">
-                                                        <span className="text-stone-400 text-[10px] uppercase block">Great Ones</span>
-                                                        <span className="text-go-gold text-lg font-bold">
-                                                            {historicalStats.reduce((sum, animal) => sum + animal.total_great_ones, 0)}
-                                                        </span>
-                                                    </div>
-                                                </div>
-                                            </div>
+                    <div className="flex-1 overflow-y-auto p-3 space-y-3 flex flex-col">
+                        <div className="flex-1 space-y-3">
+                            {/* Animal Selector Menu */}
+                            <div className="relative group">
+                                {/* Label + Search inline */}
+                                <div className="flex items-center justify-between mb-1">
+                                    <label className="text-[10px] uppercase tracking-widest text-stone-500 font-bold">
+                                        Animal
+                                    </label>
+                                    <div className="relative flex-1 ml-2">
+                                        <input
+                                            type="text"
+                                            value={animalSearch}
+                                            onChange={(e) => {
+                                                setAnimalSearch(e.target.value);
+                                                // Auto-open dropdown when user starts typing
+                                                if (e.target.value.length > 0 && !isAnimalDropdownOpen) {
+                                                    setIsAnimalDropdownOpen(true);
+                                                }
+                                            }}
+                                            placeholder="Buscar..."
+                                            className="w-full bg-stone-800/50 border border-stone-600 hover:border-hunter-orange text-white py-0.5 px-2 pr-6 rounded-none focus:outline-none focus:ring-1 focus:ring-hunter-orange transition-colors text-xs"
+                                        />
+                                        {animalSearch && (
+                                            <button
+                                                onClick={() => {
+                                                    setAnimalSearch('');
+                                                    setIsAnimalDropdownOpen(false);
+                                                }}
+                                                className="absolute inset-y-0 right-0 flex items-center px-1.5 text-stone-400 hover:text-white"
+                                            >
+                                                <i className="fa-solid fa-xmark text-xs"></i>
+                                            </button>
                                         )}
                                     </div>
-                                )}
+                                </div>
+                                {/* Custom Dropdown */}
+                                <div className="relative">
+                                    <button
+                                        onClick={() => setIsAnimalDropdownOpen(!isAnimalDropdownOpen)}
+                                        className="w-full bg-gradient-to-br from-stone-800 via-stone-950 to-black border border-stone-600 hover:border-hunter-orange text-white py-1.5 px-2 pr-8 rounded-none focus:outline-none focus:ring-1 focus:ring-hunter-orange transition-colors font-serif text-xs text-left flex items-center justify-between"
+                                        title="Selecione o animal que está caçando"
+                                    >
+                                        <span className="truncate">
+                                            {selectedAnimal ? selectedAnimal.name_ptbr : 'Selecione um animal...'}
+                                        </span>
+                                        <i className={`fa-solid fa-caret-down text-hunter-orange ${isAnimalDropdownOpen ? 'rotate-180' : ''} `}></i>
+                                    </button>
 
-                                {/* Overall Statistics Card */}
-                                {stats && session && (
-                                    <div className="bg-hunter-orange/10 border border-hunter-orange/30 rounded-sm overflow-hidden">
-                                        <div
-                                            className="p-3 cursor-pointer hover:bg-hunter-orange/5 transition-colors flex justify-between items-center"
-                                            onClick={() => setShowCurrentSession(!showCurrentSession)}
-                                        >
-                                            <h4 className="text-hunter-orange uppercase text-xs font-bold flex items-center gap-2">
-                                                <i className="fa-solid fa-chart-line"></i> Sessão Atual
-                                            </h4>
-                                            <i className={`fa-solid fa-chevron-${showCurrentSession ? 'up' : 'down'} text-hunter-orange text-xs`}></i>
-                                        </div>
+                                    {/* Dropdown Menu */}
+                                    {isAnimalDropdownOpen && (
+                                        <>
+                                            {/* Backdrop to close on click outside */}
+                                            <div className="fixed inset-0 z-40" onClick={() => setIsAnimalDropdownOpen(false)}></div>
 
-                                        {showCurrentSession && (
-                                            <div className="px-3 pb-3 animate-fade-in">
-                                                <div className="grid grid-cols-2 gap-2 text-xs">
-                                                    <div>
-                                                        <span className="text-stone-500 text-[10px] uppercase block">Abates</span>
-                                                        <span className="text-white font-bold">{stats.total_kills || 0}</span>
-                                                    </div>
-                                                    <div>
-                                                        <span className="text-stone-500 text-[10px] uppercase block">Diamantes</span>
-                                                        <span className="text-blue-400 font-bold">{stats.total_diamonds || 0}</span>
-                                                    </div>
-                                                    <div>
-                                                        <span className="text-stone-500 text-[10px] uppercase block">Great Ones</span>
-                                                        <span className="text-go-gold font-bold">{stats.total_great_ones || 0}</span>
-                                                    </div>
-                                                    <div>
-                                                        <span className="text-stone-500 text-[10px] uppercase block">Raros</span>
-                                                        <span className="text-purple-400 font-bold">{stats.total_rare_furs || 0}</span>
-                                                    </div>
-                                                </div>
-
-                                                {/* Averages - Only if there are kills */}
-                                                {stats.total_kills > 0 && (
-                                                    <div className="mt-3 pt-3 border-t border-hunter-orange/20">
-                                                        <h5 className="text-stone-400 uppercase text-[10px] font-bold mb-2">Médias</h5>
-                                                        <div className="space-y-1 text-[11px]">
-                                                            {stats.total_diamonds > 0 && (
-                                                                <div className="flex justify-between">
-                                                                    <span className="text-stone-500">Abates/Diamante:</span>
-                                                                    <span className="text-blue-300 font-bold">
-                                                                        {(stats.total_kills / stats.total_diamonds).toFixed(1)}
-                                                                    </span>
-                                                                </div>
-                                                            )}
-                                                            {stats.total_great_ones > 0 && (
-                                                                <div className="flex justify-between">
-                                                                    <span className="text-stone-500">Abates/GO:</span>
-                                                                    <span className="text-go-gold font-bold">
-                                                                        {(stats.total_kills / stats.total_great_ones).toFixed(1)}
-                                                                    </span>
-                                                                </div>
-                                                            )}
-                                                            {stats.total_rare_furs > 0 && (
-                                                                <div className="flex justify-between">
-                                                                    <span className="text-stone-500">Abates/Raro:</span>
-                                                                    <span className="text-purple-300 font-bold">
-                                                                        {(stats.total_kills / stats.total_rare_furs).toFixed(1)}
-                                                                    </span>
-                                                                </div>
-                                                            )}
+                                            <div className="absolute top-full left-0 w-full z-50 mt-1 max-h-60 overflow-y-auto bg-stone-900 border border-hunter-orange/50 shadow-xl custom-scrollbar">
+                                                {animals
+                                                    .filter(animal => {
+                                                        if (animalSearch === '') return true;
+                                                        const normalizedSearch = normalizeText(animalSearch);
+                                                        return normalizeText(animal.name_ptbr).includes(normalizedSearch) ||
+                                                            normalizeText(animal.name_enus).includes(normalizedSearch);
+                                                    })
+                                                    .map((animal) => (
+                                                        <div
+                                                            key={animal.id}
+                                                            onClick={() => {
+                                                                // Simulate event for handler compatibility or call logic directly
+                                                                // Since handleAnimalSelect expects a ChangeEvent, we'll adapt or call logic directly
+                                                                // But handleAnimalSelect is complex, let's adapt:
+                                                                const syntheticEvent = { target: { value: animal.id.toString() } } as any;
+                                                                handleAnimalSelect(syntheticEvent);
+                                                                setIsAnimalDropdownOpen(false);
+                                                            }}
+                                                            className={`px-3 py-2 text-xs cursor-pointer hover:bg-hunter-orange hover:text-white transition-colors border-b border-stone-800 last:border-0 ${selectedAnimal?.id === animal.id ? 'bg-hunter-orange/20 text-hunter-orange font-bold' : 'text-stone-300'} `}
+                                                        >
+                                                            {animal.name_ptbr}
                                                         </div>
-                                                    </div>
-                                                )}
+                                                    ))
+                                                }
+                                                {animals.filter(a => {
+                                                    if (animalSearch === '') return true;
+                                                    const normalizedSearch = normalizeText(animalSearch);
+                                                    return normalizeText(a.name_ptbr).includes(normalizedSearch) ||
+                                                        normalizeText(a.name_enus).includes(normalizedSearch);
+                                                }).length === 0 && (
+                                                        <div className="px-3 py-4 text-center text-stone-500 text-xs italic">
+                                                            Nenhum animal encontrado
+                                                        </div>
+                                                    )}
                                             </div>
-                                        )}
+                                        </>
+                                    )}
+                                </div>
+                            </div>
+
+                            {!grindActive ? (
+                                /* Initial View: Start Grind Button */
+                                <div className="bg-stone-800/30 border border-white/5 p-6 rounded-sm relative overflow-hidden">
+                                    <div className="flex flex-col items-center justify-center py-8">
+                                        <button
+                                            onClick={() => {
+                                                // Pegar o primeiro animal dos resultados filtrados ou o selecionado
+                                                const filteredAnimals = animals.filter(animal => {
+                                                    if (animalSearch === '') return true;
+                                                    const normalizedSearch = normalizeText(animalSearch);
+                                                    return normalizeText(animal.name_ptbr).includes(normalizedSearch) ||
+                                                        normalizeText(animal.name_enus).includes(normalizedSearch);
+                                                });
+
+                                                const animalToUse = selectedAnimal || (filteredAnimals.length > 0 ? filteredAnimals[0] : null);
+
+                                                if (animalToUse) {
+                                                    setSelectedAnimal(animalToUse);
+                                                    setGrindActive(true);
+                                                }
+                                            }}
+                                            disabled={(() => {
+                                                // Habilita se: tem animal selecionado OU tem resultados da busca
+                                                const filteredAnimals = animals.filter(animal => {
+                                                    if (animalSearch === '') return true;
+                                                    const normalizedSearch = normalizeText(animalSearch);
+                                                    return normalizeText(animal.name_ptbr).includes(normalizedSearch) ||
+                                                        normalizeText(animal.name_enus).includes(normalizedSearch);
+                                                });
+                                                return !selectedAnimal && filteredAnimals.length === 0;
+                                            })()}
+                                            title="Iniciar sessão de grind"
+                                            className={`w-full py-3 px-4 text-sm font-bold border transition-colors rounded-sm flex items-center justify-center gap-2 active:scale-[0.98] ${(() => {
+                                                const filteredAnimals = animals.filter(animal => {
+                                                    if (animalSearch === '') return true;
+                                                    const normalizedSearch = normalizeText(animalSearch);
+                                                    return normalizeText(animal.name_ptbr).includes(normalizedSearch) ||
+                                                        normalizeText(animal.name_enus).includes(normalizedSearch);
+                                                });
+                                                return (selectedAnimal || filteredAnimals.length > 0)
+                                                    ? 'border-hunter-orange bg-gradient-to-r from-hunter-orange/90 to-orange-600/80 text-white hover:shadow-[0_0_20px_rgba(217,93,30,0.4)]'
+                                                    : 'border-stone-700 bg-stone-800/50 text-stone-600 cursor-not-allowed';
+                                            })()
+                                                } `}
+                                        >
+                                            <i className="fa-solid fa-play"></i>
+                                            <span className="uppercase tracking-wide">Iniciar Grind</span>
+                                        </button>
+
+                                        {!selectedAnimal && animals.filter(animal => {
+                                            if (animalSearch === '') return true;
+                                            const normalizedSearch = normalizeText(animalSearch);
+                                            return normalizeText(animal.name_ptbr).includes(normalizedSearch) ||
+                                                normalizeText(animal.name_enus).includes(normalizedSearch);
+                                        }).length === 0 && (
+                                                <p className="text-stone-500 text-xs mt-3">
+                                                    Selecione um animal para começar
+                                                </p>
+                                            )}
                                     </div>
-                                )}
+                                </div>
+                            ) : (
+                                /* Active Grind View: Counter + Action Buttons */
+                                <>
+                                    {/* The Grind Counter */}
+                                    <div className="bg-stone-800/30 border border-white/5 p-3 rounded-sm relative overflow-hidden">
+                                        {/* Background hunting image */}
+                                        <div
+                                            className="absolute inset-0 opacity-5 pointer-events-none bg-cover bg-center"
+                                            style={{ backgroundImage: 'url(/hunting-bg.png)' }}
+                                        ></div>
 
-                                {/* Historical Stats by Animal */}
-                                {historicalStats.length > 0 ? (
-                                    <>
-                                        <div className="flex items-center justify-between gap-2 pt-2">
-                                            <h4 className="text-stone-400 uppercase text-sm font-bold flex items-center gap-2">
-                                                <i className="fa-solid fa-trophy"></i> Histórico
-                                            </h4>
-                                            {/* Search Bar */}
-                                            <div className="relative flex-1 max-w-[140px]">
-                                                <input
-                                                    type="text"
-                                                    placeholder="Buscar..."
-                                                    value={statsSearch}
-                                                    onChange={(e) => setStatsSearch(e.target.value)}
-                                                    className="w-full px-2 py-1 pr-6 bg-stone-900 border border-stone-700 text-white text-[11px] focus:outline-none focus:border-hunter-orange rounded-sm"
-                                                />
-                                                <i className="fa-solid fa-search absolute right-2 top-1/2 -translate-y-1/2 text-stone-500 text-[10px]"></i>
-                                            </div>
-                                        </div>
+                                        <div className="flex items-center justify-between mb-3 relative z-10">
+                                            <button
+                                                onClick={() => updateCounter(-1)}
+                                                title="Decrementar contador (Ctrl+Shift+-)"
+                                                className="w-7 h-7 rounded-sm border border-stone-600 text-stone-400 hover:border-red-500 hover:text-red-500 hover:bg-red-500/10  active:scale-95 flex items-center justify-center text-xs"
+                                            >
+                                                <i className="fa-solid fa-minus"></i>
+                                            </button>
 
-                                        {historicalStats
-                                            .filter(animal =>
-                                                animal.animal_name.toLowerCase().includes(statsSearch.toLowerCase())
-                                            )
-                                            .map((animalStat, index) => {
-                                                const maxKills = Math.max(...historicalStats.map(s => s.total_kills), 1);
-                                                const progressPercent = (animalStat.total_kills / maxKills) * 100;
-                                                const lastDate = new Date(animalStat.last_session_date).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' });
-                                                const isExpanded = selectedAnimalForStats === animalStat.animal_id;
-                                                const isTopAnimal = index === 0 && statsSearch === '';
+                                            <div className="text-center">
+                                                <div className="flex items-end justify-center gap-1">
+                                                    {/* Current Session Count (Small Orange) */}
+                                                    <span className="text-hunter-orange font-bold text-xs leading-none pb-0.5" title="Abates nesta sessão">
+                                                        {session?.total_kills || 0}
+                                                    </span>
 
-                                                return (
-                                                    <div
-                                                        key={animalStat.animal_id}
-                                                        className={`bg-stone-900 border p-2 rounded-sm transition-all cursor-pointer ${animalStat.has_active_session ? 'border-hunter-orange/50' :
-                                                            isExpanded ? 'border-hunter-orange' : 'border-white/5 hover:border-hunter-orange/30'
-                                                            }`}
-                                                        onClick={() => setSelectedAnimalForStats(
-                                                            isExpanded ? null : animalStat.animal_id
-                                                        )}
+                                                    {/* Total Grind Count (Large White) */}
+                                                    <span
+                                                        className="text-4xl font-sans font-bold text-white drop-shadow-[0_0_10px_rgba(255,255,255,0.2)] leading-none"
+                                                        title="Total de abates (Grind)"
                                                     >
-                                                        <div className="flex justify-between items-center mb-1">
-                                                            <span className={`font-serif text-xs font-bold flex items-center gap-1 ${isTopAnimal ? 'text-hunter-orange' : 'text-stone-400'
-                                                                }`}>
-                                                                {animalStat.animal_name}
-                                                                <i className={`fa-solid fa-chevron-${isExpanded ? 'up' : 'down'} text-[8px]`}></i>
-                                                            </span>
-                                                            <span className="text-[9px] text-stone-500">
-                                                                {animalStat.has_active_session ? 'Ativa' : lastDate}
-                                                            </span>
-                                                        </div>
+                                                        {animalTotalKills}
+                                                    </span>
+                                                </div>
+                                                <span className="text-[10px] uppercase tracking-[0.3em] text-stone-500">Abates</span>
+                                            </div>
 
-                                                        <div className="flex gap-2 text-[9px] text-stone-400 mb-1">
-                                                            <span className="flex items-center gap-1">
-                                                                Total: <strong className="text-white">{animalStat.total_kills}</strong>
-                                                            </span>
-                                                            <span className="flex items-center gap-1 text-blue-400">
-                                                                <i className="fa-regular fa-gem"></i> {animalStat.total_diamonds}
-                                                            </span>
-                                                            <span className="flex items-center gap-1 text-go-gold">
-                                                                <i className="fa-solid fa-crown"></i> {animalStat.total_great_ones}
-                                                            </span>
-                                                        </div>
+                                            <button
+                                                onClick={() => updateCounter(1)}
+                                                title="Incrementar contador (Ctrl+Shift+=)"
+                                                className="w-7 h-7 rounded-sm border border-stone-600 text-stone-400 hover:border-hunter-orange hover:text-hunter-orange hover:bg-hunter-orange/10  active:scale-95 flex items-center justify-center text-xs"
+                                            >
+                                                <i className="fa-solid fa-plus"></i>
+                                            </button>
+                                        </div>
 
-                                                        <div className="w-full h-1 bg-stone-800 rounded-full overflow-hidden">
-                                                            <div
-                                                                className={`h-full rounded-full ${isTopAnimal ? 'bg-hunter-orange' : 'bg-stone-600'
-                                                                    }`}
-                                                                style={{ width: `${progressPercent}%` }}
-                                                            ></div>
-                                                        </div>
+                                        {/* Extra Toggles & GREAT ONE */}
+                                        <div className="space-y-2 relative z-10">
+                                            {/* Row 1: Standard Rares */}
+                                            <div className="grid grid-cols-2 gap-2">
+                                                <button
+                                                    onClick={() => {
+                                                        if (confirm('Confirmar registro de DIAMANTE?')) {
+                                                            addKill(true);
+                                                        }
+                                                    }}
+                                                    title="Registrar diamante (diamante comum)"
+                                                    className="py-1.5 px-2 text-[9px] font-bold border border-blue-600/50 bg-gradient-to-r from-blue-900/20 via-blue-800/10 to-blue-900/20 text-blue-300 hover:bg-blue-500 hover:text-white hover:border-blue-400 hover:shadow-[0_0_15px_rgba(59,130,246,0.4)] transition-colors rounded-sm flex items-center justify-center gap-1 active:scale-[0.98]"
+                                                >
+                                                    <i className="fa-regular fa-gem text-sm"></i> DIAMANTE
+                                                </button>
+                                                <button
+                                                    onClick={fetchFurTypes}
+                                                    title="Registrar pelagem rara"
+                                                    className="py-1.5 px-2 text-[9px] font-bold border border-purple-600/50 bg-gradient-to-r from-purple-900/20 via-purple-800/10 to-purple-900/20 text-purple-300 hover:bg-purple-500 hover:text-white hover:border-purple-400 hover:shadow-[0_0_15px_rgba(168,85,247,0.4)] transition-colors rounded-sm flex items-center justify-center gap-1 active:scale-[0.98]"
+                                                >
+                                                    <i className="fa-solid fa-star text-sm"></i> RARO
+                                                </button>
+                                            </div>
 
-                                                        {/* Expanded Details */}
-                                                        {isExpanded && (
-                                                            <div className="mt-2 pt-2 border-t border-stone-700 space-y-2 animate-fade-in">
-                                                                <h5 className="text-stone-400 uppercase text-[9px] font-bold">Estatísticas Detalhadas</h5>
+                                            {/* Row 2: GREAT ONE + DIAMOND RARE */}
+                                            <div className="grid grid-cols-2 gap-2">
+                                                <button
+                                                    onClick={() => {
+                                                        if (confirm('🏆 Confirmar captura do GREAT ONE?')) {
+                                                            addKill(false, true);
+                                                        }
+                                                    }}
+                                                    title="Registrar Great One! (o troféu máximo)"
+                                                    className="py-1.5 px-2 text-[9px] font-bold border border-yellow-600/50 bg-gradient-to-r from-yellow-900/20 via-yellow-800/10 to-yellow-900/20 text-go-gold hover:bg-gradient-to-r hover:from-yellow-600 hover:via-yellow-500 hover:to-yellow-600 hover:text-white hover:border-go-gold hover:shadow-[0_0_20px_rgba(251,191,36,0.4)] transition-colors rounded-sm flex items-center justify-center gap-1 group animate-pulse-gold active:scale-[0.98]"
+                                                >
+                                                    <i className="fa-solid fa-crown text-xs group-hover:animate-bounce"></i>
+                                                    <span className="tracking-[0.15em]">GREAT ONE</span>
+                                                </button>
 
-                                                                <div className="grid grid-cols-2 gap-2 text-[10px]">
-                                                                    <div className="bg-stone-950/50 p-1.5 rounded">
-                                                                        <span className="text-stone-500 block text-[8px]">Total Abates</span>
-                                                                        <span className="text-white font-bold">{animalStat.total_kills}</span>
-                                                                    </div>
-                                                                    <div className="bg-stone-950/50 p-1.5 rounded">
-                                                                        <span className="text-stone-500 block text-[8px]">Diamantes</span>
-                                                                        <span className="text-blue-400 font-bold">{animalStat.total_diamonds}</span>
-                                                                    </div>
-                                                                    <div className="bg-stone-950/50 p-1.5 rounded">
-                                                                        <span className="text-stone-500 block text-[8px]">Great Ones</span>
-                                                                        <span className="text-go-gold font-bold">{animalStat.total_great_ones}</span>
-                                                                    </div>
-                                                                    <div className="bg-stone-950/50 p-1.5 rounded">
-                                                                        <span className="text-stone-500 block text-[8px]">Última Sessão</span>
-                                                                        <span className="text-stone-300 font-mono text-[9px]">{lastDate}</span>
-                                                                    </div>
-                                                                </div>
+                                                <button
+                                                    onClick={async () => {
+                                                        // Busca fur types e registra diamante raro
+                                                        try {
+                                                            const furTypesData = await getFurTypes();
+                                                            setFurTypes(furTypesData);
+                                                            setShowFurTypes(true);
+                                                            // Marca que é pra registrar como diamante raro
+                                                            (window as any).__isDiamondRare = true;
+                                                        } catch (error) {
+                                                            console.error('Erro ao buscar fur types:', error);
+                                                        }
+                                                    }}
+                                                    title="Registrar Diamante Raro (diamante + pelagem rara)"
+                                                    className="py-1.5 px-2 text-[9px] font-bold border border-cyan-600/50 bg-gradient-to-r from-cyan-900/20 via-blue-900/10 to-purple-900/20 text-cyan-300 hover:bg-gradient-to-r hover:from-cyan-600 hover:via-blue-500 hover:to-purple-600 hover:text-white hover:border-cyan-400 hover:shadow-[0_0_20px_rgba(34,211,238,0.4)] transition-colors rounded-sm flex items-center justify-center gap-1 active:scale-[0.98]"
+                                                >
+                                                    <i className="fa-regular fa-gem text-sm"></i>
+                                                    <i className="fa-solid fa-star text-xs"></i>
+                                                    <span className="tracking-[0.15em]">DIAMANTE RARO</span>
+                                                </button>
+                                            </div>
 
-                                                                {/* Averages for this animal */}
-                                                                {animalStat.total_kills > 0 && (
-                                                                    <div className="space-y-1 text-[10px]">
-                                                                        <h6 className="text-stone-500 uppercase text-[8px] font-bold">Médias</h6>
-                                                                        {animalStat.total_diamonds > 0 && (
-                                                                            <div className="flex justify-between">
-                                                                                <span className="text-stone-500">Abat./Diam.:</span>
-                                                                                <span className="text-blue-300 font-bold">
-                                                                                    {(animalStat.total_kills / animalStat.total_diamonds).toFixed(1)}
-                                                                                </span>
-                                                                            </div>
-                                                                        )}
-                                                                        {animalStat.total_great_ones > 0 && (
-                                                                            <div className="flex justify-between">
-                                                                                <span className="text-stone-500">Abat./GO:</span>
-                                                                                <span className="text-go-gold font-bold">
-                                                                                    {(animalStat.total_kills / animalStat.total_great_ones).toFixed(1)}
-                                                                                </span>
-                                                                            </div>
-                                                                        )}
+                                            {/* Need Zones Button */}
+                                            <button
+                                                onClick={() => setShowNeedZonesPanel(true)}
+                                                title="Ver Horários de Necessidades"
+                                                className="py-1.5 px-2 text-[9px] font-bold border border-green-600/50 bg-gradient-to-r from-green-900/20 to-emerald-900/20 text-green-300 hover:bg-gradient-to-r hover:from-green-600 hover:to-emerald-600 hover:text-white hover:border-green-400 hover:shadow-[0_0_20px_rgba(34,197,94,0.4)] transition-colors rounded-sm flex items-center justify-center gap-1 active:scale-[0.98]"
+                                            >
+                                                <i className="fa-solid fa-clock text-sm"></i>
+                                                <span className="tracking-[0.15em]">HORÁRIOS</span>
+                                            </button>
+
+                                            {/* Session Date with Two Buttons */}
+                                            <div className="mt-2 pt-2 border-t border-white/10">
+                                                <div className="flex items-center justify-between mb-1.5">
+                                                    <p className="text-[9px] uppercase text-stone-500 tracking-wider">
+                                                        Início: <span className="text-stone-300 font-mono">{startDate}</span>
+                                                    </p>
+                                                </div>
+
+                                                {/* Two Buttons: Encerrar Sessão | Encerrar Grind */}
+                                                <div className="grid grid-cols-2 gap-1.5">
+                                                    {/* Encerrar Sessão (zera apenas contador atual) */}
+                                                    <button
+                                                        onClick={() => {
+                                                            setConfirmModal({
+                                                                show: true,
+                                                                title: 'Encerrar Sessão',
+                                                                message: 'Deseja encerrar a sessão atual? O contador será zerado, mas o grind continua ativo.',
+                                                                confirmText: 'Encerrar Sessão',
+                                                                confirmColor: 'yellow',
+                                                                onConfirm: async () => {
+                                                                    await resetCurrentSession();
+                                                                    // Force refresh active sessions
+                                                                    if (user) {
+                                                                        getActiveSessions(user.uid).then(setActiveSessions);
+                                                                    }
+                                                                }
+                                                            });
+                                                        }}
+                                                        title="Encerrar apenas a sessão atual"
+                                                        className="py-1 px-2 text-[9px] font-bold border border-yellow-600 bg-yellow-900/20 text-yellow-400 hover:bg-yellow-600 hover:text-white  rounded-sm flex items-center justify-center gap-1 active:scale-95"
+                                                    >
+                                                        <i className="fa-solid fa-rotate-left"></i>
+                                                        <span className="uppercase tracking-wide">Sessão</span>
+                                                    </button>
+
+                                                    {/* Encerrar Grind (encerra tudo) */}
+                                                    <button
+                                                        onClick={() => {
+                                                            setConfirmModal({
+                                                                show: true,
+                                                                title: 'Encerrar Grind',
+                                                                message: 'Deseja encerrar TODO o grind? Isso finalizará a sessão atual e voltará para a seleção de animal.',
+                                                                confirmText: 'Encerrar Grind',
+                                                                confirmColor: 'red',
+                                                                onConfirm: async () => {
+                                                                    await resetGrind();
+                                                                    setGrindActive(false);
+                                                                    // Force refresh active sessions
+                                                                    if (user) {
+                                                                        getActiveSessions(user.uid).then(setActiveSessions);
+                                                                    }
+                                                                }
+                                                            });
+                                                        }}
+                                                        title="Encerrar todo o grind"
+                                                        className="py-1 px-2 text-[9px] font-bold border border-red-600 bg-red-900/20 text-red-400 hover:bg-red-600 hover:text-white  rounded-sm flex items-center justify-center gap-1 active:scale-95"
+                                                    >
+                                                        <i className="fa-solid fa-xmark"></i>
+                                                        <span className="uppercase tracking-wide">Grind</span>
+                                                    </button>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </>
+                            )}
+
+                            {/* Bottom buttons */}
+                            <div className="border-t border-white/10 pt-1.5 mt-1.5 space-y-1">
+
+                                <button
+                                    onClick={() => {
+                                        setConfirmModal({
+                                            show: true,
+                                            title: 'Sair',
+                                            message: 'Deseja realmente sair do aplicativo?',
+                                            confirmText: 'Sair',
+                                            confirmColor: 'red',
+                                            onConfirm: handleLogout
+                                        });
+                                    }}
+                                    title="Sair do aplicativo"
+                                    className="w-full py-1.5 px-2 text-xs font-bold border border-red-600 bg-red-900/20 text-red-500 hover:bg-red-600 hover:text-white  rounded-sm flex items-center justify-center gap-1 active:scale-95"
+                                >
+                                    <i className="fa-solid fa-power-off"></i>
+                                    <span className="uppercase tracking-wide">Sair</span>
+                                </button>
+                            </div>
+                        </div>
+
+
+                        {/* Promo Footer - Fixed at bottom */}
+                        <div className="mt-auto pt-3 border-t border-white/10 text-center pb-0 shrink-0">
+                            <p className="text-[11px] text-stone-400 mb-0">
+                                Gerencie suas zonas de caça e grind no{' '}
+                                <span
+                                    onClick={() => (window as any).electron?.openExternal('https://cotwpinplanner.app')}
+                                    className="text-hunter-orange hover:text-yellow-400 transition-colors font-bold tracking-wide cursor-pointer"
+                                >
+                                    Pin Planner →
+                                </span>
+                            </p>
+                        </div>
+
+                        {/* STATS MODAL */}
+                        {showStats && (
+                            <div className="absolute inset-0 z-50 bg-stone-950/95 backdrop-blur-md flex flex-col">
+                                <div className="p-2 border-b border-white/10 flex justify-between items-center bg-stone-900 shadow-lg">
+                                    <h3 className="font-serif text-white uppercase tracking-wider text-xs">
+                                        <i className="fa-solid fa-chart-pie text-hunter-orange mr-2"></i> Estatísticas
+                                    </h3>
+                                    <button
+                                        onClick={() => setShowStats(false)}
+                                        className="text-stone-400 hover:text-white transition-colors w-7 h-7 flex items-center justify-center rounded-full hover:bg-white/10"
+                                    >
+                                        <i className="fa-solid fa-xmark text-base"></i>
+                                    </button>
+                                </div>
+
+                                <div className="flex-1 overflow-y-auto p-3 space-y-3">
+                                    {/* Grand Total Statistics - All Species Combined */}
+                                    {historicalStats.length > 0 && (
+                                        <div className="bg-gradient-to-r from-stone-900 to-stone-800 border-2 border-hunter-orange/50 rounded-sm overflow-hidden">
+                                            <div
+                                                className="p-3 cursor-pointer hover:bg-hunter-orange/5 transition-colors flex justify-between items-center"
+                                                onClick={() => setShowGrandTotal(!showGrandTotal)}
+                                            >
+                                                <h4 className="text-white uppercase text-sm font-bold flex items-center gap-2">
+                                                    <i className="fa-solid fa-globe"></i> Total Geral
+                                                </h4>
+                                                <i className={`fa-solid fa-chevron-${showGrandTotal ? 'up' : 'down'} text-stone-400 text-xs`}></i>
+                                            </div>
+
+                                            {showGrandTotal && (
+                                                <div className="px-3 pb-3">
+                                                    <div className="grid grid-cols-2 gap-2 text-xs">
+                                                        {(() => {
+                                                            const totalKills = historicalStats.reduce((sum, animal) => sum + animal.total_kills, 0);
+                                                            const totalDiamonds = historicalStats.reduce((sum, animal) => sum + animal.total_diamonds, 0);
+                                                            const totalGreatOnes = historicalStats.reduce((sum, animal) => sum + animal.total_great_ones, 0);
+                                                            const totalRares = historicalStats.reduce((sum, animal) => sum + animal.total_rares, 0);
+                                                            const totalSuperRares = historicalStats.reduce((sum, animal) => sum + animal.super_rares, 0);
+                                                            const speciesCount = historicalStats.filter(animal => animal.total_kills > 0).length;
+
+                                                            const avgDiamonds = totalDiamonds > 0 ? (totalKills / totalDiamonds).toFixed(1) : '0';
+                                                            const avgGreatOnes = totalGreatOnes > 0 ? (totalKills / totalGreatOnes).toFixed(1) : '0';
+                                                            const avgRares = totalRares > 0 ? (totalKills / totalRares).toFixed(1) : '0';
+                                                            const avgSuperRares = totalSuperRares > 0 ? (totalKills / totalSuperRares).toFixed(1) : '0';
+
+                                                            return (
+                                                                <>
+                                                                    <div className="bg-black/30 p-2 rounded">
+                                                                        <span className="text-stone-400 text-[10px] uppercase block flex items-center gap-1">
+                                                                            <i className="fa-solid fa-crosshairs"></i> Total de Abates
+                                                                        </span>
+                                                                        <span className="text-white text-2xl font-bold">
+                                                                            {totalKills}
+                                                                        </span>
                                                                     </div>
-                                                                )}
-                                                            </div>
-                                                        )}
+                                                                    <div className="bg-black/30 p-2 rounded">
+                                                                        <span className="text-stone-400 text-[10px] uppercase block flex items-center gap-1">
+                                                                            <i className="fa-solid fa-paw"></i> Espécies Caçadas
+                                                                        </span>
+                                                                        <span className="text-hunter-orange text-2xl font-bold">
+                                                                            {speciesCount}
+                                                                        </span>
+                                                                    </div>
+                                                                    <div className="bg-black/30 p-2 rounded">
+                                                                        <span className="text-stone-400 text-[10px] uppercase block flex items-center gap-1">
+                                                                            <i className="fa-regular fa-gem"></i> Diamantes
+                                                                        </span>
+                                                                        <div className="flex items-baseline gap-2">
+                                                                            <span className="text-blue-400 text-xl font-bold">{totalDiamonds}</span>
+                                                                            {totalDiamonds > 0 && (
+                                                                                <span className="text-yellow-400 text-sm">({avgDiamonds})</span>
+                                                                            )}
+                                                                        </div>
+                                                                    </div>
+                                                                    <div className="bg-black/30 p-2 rounded">
+                                                                        <span className="text-stone-400 text-[10px] uppercase block flex items-center gap-1">
+                                                                            <i className="fa-solid fa-crown"></i> Great Ones
+                                                                        </span>
+                                                                        <div className="flex items-baseline gap-2">
+                                                                            <span className="text-go-gold text-xl font-bold">{totalGreatOnes}</span>
+                                                                            {totalGreatOnes > 0 && (
+                                                                                <span className="text-yellow-400 text-sm">({avgGreatOnes})</span>
+                                                                            )}
+                                                                        </div>
+                                                                    </div>
+                                                                    <div className="bg-black/30 p-2 rounded">
+                                                                        <span className="text-stone-400 text-[10px] uppercase block flex items-center gap-1">
+                                                                            <i className="fa-solid fa-star"></i> Raros
+                                                                        </span>
+                                                                        <div className="flex items-baseline gap-2">
+                                                                            <span className="text-purple-400 text-xl font-bold">{totalRares}</span>
+                                                                            {totalRares > 0 && (
+                                                                                <span className="text-yellow-400 text-sm">({avgRares})</span>
+                                                                            )}
+                                                                        </div>
+                                                                    </div>
+                                                                    <div className="bg-black/30 p-2 rounded">
+                                                                        <span className="text-stone-400 text-[10px] uppercase block flex items-center gap-1">
+                                                                            <i className="fa-solid fa-medal"></i> Super Raros
+                                                                        </span>
+                                                                        <div className="flex items-baseline gap-2">
+                                                                            <span className="text-pink-400 text-xl font-bold">{totalSuperRares}</span>
+                                                                            {totalSuperRares > 0 && (
+                                                                                <span className="text-yellow-400 text-sm">({avgSuperRares})</span>
+                                                                            )}
+                                                                        </div>
+                                                                    </div>
+                                                                </>
+                                                            );
+                                                        })()}
                                                     </div>
-                                                );
-                                            })}
-
-                                        {historicalStats.filter(a =>
-                                            a.animal_name.toLowerCase().includes(statsSearch.toLowerCase())
-                                        ).length === 0 && (
-                                                <div className="text-center text-stone-500 py-4 text-xs">
-                                                    <i className="fa-solid fa-search text-2xl mb-2 opacity-30"></i>
-                                                    <p>Nenhum animal encontrado</p>
                                                 </div>
                                             )}
-                                    </>
-                                ) : !session ? (
-                                    <div className="text-center text-stone-500 py-8">
-                                        <i className="fa-solid fa-chart-line text-4xl mb-4 opacity-30"></i>
-                                        <p className="text-sm">Nenhuma sessão encontrada</p>
-                                        <p className="text-xs mt-2">Comece uma caçada para ver suas estatísticas</p>
-                                    </div>
-                                ) : null}
-                            </div>
-                        </div>
-                    )}
+                                        </div>
+                                    )}
 
-                    {/* FUR TYPES MODAL */}
-                    {showFurTypes && (
-                        <div className="absolute inset-0 z-50 bg-stone-950/95 backdrop-blur-md flex flex-col animate-fade-in">
-                            <div className="p-4 border-b border-white/10 flex justify-between items-center bg-stone-900 shadow-lg">
-                                <h3 className="font-serif text-white uppercase tracking-wider text-sm">
-                                    <i className="fa-solid fa-star text-purple-400 mr-2"></i> Pelagem
-                                </h3>
-                                <button
-                                    onClick={() => setShowFurTypes(false)}
-                                    className="text-stone-400 hover:text-white transition-colors w-8 h-8 flex items-center justify-center rounded-full hover:bg-white/10"
-                                >
-                                    <i className="fa-solid fa-xmark text-lg"></i>
-                                </button>
-                            </div>
+                                    {/* Overall Statistics Card */}
+                                    {activeSessions.length > 0 && (
+                                        <div className="bg-hunter-orange/10 border border-hunter-orange/30 rounded-sm overflow-hidden">
+                                            <div
+                                                className="p-3 cursor-pointer hover:bg-hunter-orange/5 transition-colors flex justify-between items-center"
+                                                onClick={() => setShowCurrentSession(!showCurrentSession)}
+                                            >
+                                                <h4 className="text-hunter-orange uppercase text-xs font-bold flex items-center gap-2">
+                                                    <i className="fa-solid fa-chart-line"></i> Sessões Ativas ({activeSessions.length})
+                                                </h4>
+                                                <i className={`fa-solid fa-chevron-${showCurrentSession ? 'up' : 'down'} text-hunter-orange text-xs`}></i>
+                                            </div>
 
-                            {/* Search Input */}
-                            <div className="p-3 border-b border-white/10">
-                                <div className="relative">
-                                    <i className="fa-solid fa-search absolute left-3 top-1/2 -translate-y-1/2 text-stone-500 text-xs"></i>
-                                    <input
-                                        type="text"
-                                        placeholder="Buscar pelagem..."
-                                        value={furTypeSearch}
-                                        onChange={(e) => setFurTypeSearch(e.target.value)}
-                                        className="w-full bg-stone-800 border border-stone-700 rounded pl-9 pr-3 py-2 text-xs text-white placeholder-stone-500 focus:outline-none focus:border-purple-500 transition-colors"
-                                    />
+                                            {showCurrentSession && (
+                                                <div className="px-3 pb-3 space-y-3">
+                                                    {activeSessions.map((activeSession, index) => (
+                                                        <div
+                                                            key={activeSession.session_id}
+                                                            className={`${index > 0 ? 'pt-3 border-t border-hunter-orange/20' : ''} `}
+                                                        >
+                                                            <h5 className="text-hunter-orange font-bold text-[11px] uppercase mb-2 flex items-center gap-2">
+                                                                <i className="fa-solid fa-paw"></i>
+                                                                {activeSession.animal_name}
+                                                            </h5>
+                                                            <div className="grid grid-cols-2 gap-2 text-xs">
+                                                                <div>
+                                                                    <span className="text-stone-500 text-[10px] uppercase block">Abates</span>
+                                                                    <span className="text-white font-bold">{activeSession.total_kills || 0}</span>
+                                                                </div>
+                                                                <div>
+                                                                    <span className="text-stone-500 text-[10px] uppercase block">Diamantes</span>
+                                                                    <span className="text-blue-400 font-bold">{activeSession.total_diamonds || 0}</span>
+                                                                </div>
+                                                                <div>
+                                                                    <span className="text-stone-500 text-[10px] uppercase block">Great Ones</span>
+                                                                    <span className="text-go-gold font-bold">{activeSession.total_great_ones || 0}</span>
+                                                                </div>
+                                                                <div>
+                                                                    <span className="text-stone-500 text-[10px] uppercase block">Raros</span>
+                                                                    <span className="text-purple-400 font-bold">{activeSession.total_rare_furs || 0}</span>
+                                                                </div>
+                                                            </div>
+
+                                                            {/* Averages - Only if there are kills */}
+                                                            {activeSession.total_kills > 0 && (
+                                                                <div className="mt-2 pt-2 border-t border-hunter-orange/10">
+                                                                    <div className="space-y-1 text-[10px]">
+                                                                        {activeSession.total_diamonds > 0 && (
+                                                                            <div className="flex justify-between">
+                                                                                <span className="text-stone-500">Abates/Diamante:</span>
+                                                                                <span className="text-blue-300 font-bold">
+                                                                                    {(activeSession.total_kills / activeSession.total_diamonds).toFixed(1)}
+                                                                                </span>
+                                                                            </div>
+                                                                        )}
+                                                                        {activeSession.total_great_ones > 0 && (
+                                                                            <div className="flex justify-between">
+                                                                                <span className="text-stone-500">Abates/GO:</span>
+                                                                                <span className="text-go-gold font-bold">
+                                                                                    {(activeSession.total_kills / activeSession.total_great_ones).toFixed(1)}
+                                                                                </span>
+                                                                            </div>
+                                                                        )}
+                                                                        {activeSession.total_rare_furs > 0 && (
+                                                                            <div className="flex justify-between">
+                                                                                <span className="text-stone-500">Abates/Raro:</span>
+                                                                                <span className="text-purple-300 font-bold">
+                                                                                    {(activeSession.total_kills / activeSession.total_rare_furs).toFixed(1)}
+                                                                                </span>
+                                                                            </div>
+                                                                        )}
+                                                                    </div>
+                                                                </div>
+                                                            )}
+                                                        </div>
+                                                    ))}
+                                                </div>
+                                            )}
+                                        </div>
+                                    )}
+
+                                    {/* Historical Stats by Animal */}
+                                    {historicalStats.length > 0 ? (
+                                        <>
+                                            <div className="flex items-center justify-between gap-2 pt-2">
+                                                <h4 className="text-stone-400 uppercase text-sm font-bold flex items-center gap-2">
+                                                    <i className="fa-solid fa-trophy"></i> Histórico
+                                                </h4>
+                                                {/* Search Bar */}
+                                                <div className="relative flex-1 max-w-[140px] z-10">
+                                                    <input
+                                                        type="text"
+                                                        placeholder="Buscar..."
+                                                        value={statsSearch}
+                                                        onChange={(e) => setStatsSearch(e.target.value)}
+                                                        className="w-full px-2 py-1 pr-6 bg-stone-900 border border-stone-700 text-white text-[11px] focus:outline-none focus:border-hunter-orange rounded-sm"
+                                                    />
+                                                    <i className="fa-solid fa-search absolute right-2 top-1/2 -translate-y-1/2 text-stone-500 text-[10px]"></i>
+                                                </div>
+                                            </div>
+
+                                            {historicalStats
+                                                .filter(animal =>
+                                                    animal.animal_name.toLowerCase().includes(statsSearch.toLowerCase())
+                                                )
+                                                .map((animalStat, index) => {
+                                                    const maxKills = Math.max(...historicalStats.map(s => s.total_kills), 1);
+                                                    const progressPercent = (animalStat.total_kills / maxKills) * 100;
+                                                    const lastDate = new Date(animalStat.last_session_date).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' });
+                                                    const isExpanded = selectedAnimalForStats === animalStat.animal_id;
+                                                    // Removed isTopAnimal logic as requested by user
+                                                    const isTopAnimal = false;
+
+                                                    return (
+                                                        <div
+                                                            key={animalStat.animal_id}
+                                                            className={`bg-stone-900 border p-2 rounded-sm  cursor-pointer ${animalStat.total_great_ones > 0 ? 'great-one-glow' : ''
+                                                                } ${animalStat.has_active_session ? 'border-hunter-orange/50' :
+                                                                    isExpanded ? 'border-hunter-orange' : 'border-white/5 hover:border-hunter-orange/30'
+                                                                } `}
+                                                            onClick={() => setSelectedAnimalForStats(
+                                                                isExpanded ? null : animalStat.animal_id
+                                                            )}
+                                                        >
+                                                            <div className="flex justify-between items-center mb-1">
+                                                                <span className={`font-serif text-xs font-bold flex items-center gap-1 ${isTopAnimal ? 'text-hunter-orange' : 'text-stone-400'
+                                                                    } `}>
+                                                                    {animalStat.animal_name}
+                                                                    <span className="ml-2 text-[11px] text-stone-400 bg-stone-950/80 px-2 py-0.5 rounded border border-stone-700 font-normal shadow-sm" title="Total de sessões de caça realizadas para este animal">
+                                                                        <i className="fa-solid fa-clock-rotate-left mr-1.5 text-hunter-orange"></i>
+                                                                        {animalStat.total_sessions}
+                                                                    </span>
+                                                                    <i className={`fa-solid fa-chevron-${isExpanded ? 'up' : 'down'} text-[8px] ml-1`}></i>
+                                                                </span>
+                                                                <span className="text-[9px] text-stone-500">
+                                                                    {animalStat.has_active_session ? 'Ativa' : lastDate}
+                                                                </span>
+                                                            </div>
+
+                                                            <div className="flex gap-2 text-[9px] text-stone-400 mb-1">
+                                                                <span className="flex items-center gap-1">
+                                                                    Total: <strong className="text-white">{animalStat.total_kills}</strong>
+                                                                </span>
+                                                                <span className="flex items-center gap-1 text-blue-400">
+                                                                    <i className="fa-regular fa-gem"></i> {animalStat.total_diamonds}
+                                                                </span>
+                                                                <span className="flex items-center gap-1 text-go-gold">
+                                                                    <i className="fa-solid fa-crown"></i> {animalStat.total_great_ones}
+                                                                </span>
+                                                            </div>
+
+                                                            <div className="w-full h-1 bg-stone-800 rounded-full overflow-hidden">
+                                                                <div
+                                                                    className={`h-full rounded-full ${isTopAnimal ? 'bg-hunter-orange' : 'bg-stone-600'
+                                                                        } `}
+                                                                    style={{ width: `${progressPercent}% ` }}
+                                                                ></div>
+                                                            </div>
+
+                                                            {/* Expanded Details */}
+                                                            {isExpanded && (
+                                                                <div className="mt-2 pt-2 border-t border-stone-700 space-y-2">
+                                                                    <h5 className="text-stone-400 uppercase text-[9px] font-bold">Estatísticas Detalhadas</h5>
+
+                                                                    <div className="grid grid-cols-2 gap-2 text-[10px]">
+                                                                        <div className="bg-stone-950/50 p-1.5 rounded">
+                                                                            <span className="text-stone-500 block text-[8px]">Total Abates</span>
+                                                                            <span className="text-white font-bold">{animalStat.total_kills}</span>
+                                                                        </div>
+                                                                        <div className="bg-stone-950/50 p-1.5 rounded">
+                                                                            <span className="text-stone-500 block text-[8px]">Diamantes</span>
+                                                                            <span className="text-blue-400 font-bold">{animalStat.total_diamonds}</span>
+                                                                        </div>
+                                                                        <div className="bg-stone-950/50 p-1.5 rounded">
+                                                                            <span className="text-stone-500 block text-[8px]">Great Ones</span>
+                                                                            <span className="text-go-gold font-bold">{animalStat.total_great_ones}</span>
+                                                                        </div>
+                                                                        <div className="bg-stone-950/50 p-1.5 rounded">
+                                                                            <span className="text-stone-500 block text-[8px]">Raros</span>
+                                                                            <span className="text-purple-400 font-bold">{animalStat.total_rares || 0}</span>
+                                                                        </div>
+                                                                    </div>
+
+                                                                    {/* Rare fur types */}
+                                                                    {animalStat.rare_types && animalStat.rare_types.length > 0 && (
+                                                                        <div className="bg-stone-950/50 p-1.5 rounded mt-2">
+                                                                            <span className="text-stone-500 block text-[8px] mb-1">Pelagens Raras</span>
+                                                                            <span className="text-purple-300 text-[9px]">{animalStat.rare_types.join(', ')}</span>
+                                                                        </div>
+                                                                    )}
+
+                                                                    <div className="grid grid-cols-2 gap-2 text-[10px] mt-2">
+                                                                        <div className="bg-stone-950/50 p-1.5 rounded">
+                                                                            <span className="text-stone-500 block text-[8px]">Última Sessão</span>
+                                                                            <span className="text-stone-300 font-mono text-[9px]">{lastDate}</span>
+                                                                        </div>
+                                                                    </div>
+
+                                                                    {/* Averages for this animal */}
+                                                                    {animalStat.total_kills > 0 && (
+                                                                        <div className="space-y-1 text-[10px]">
+                                                                            <h6 className="text-stone-500 uppercase text-[8px] font-bold">Médias</h6>
+                                                                            {animalStat.total_diamonds > 0 && (
+                                                                                <div className="flex justify-between">
+                                                                                    <span className="text-stone-500">Abat./Diam.:</span>
+                                                                                    <span className="text-blue-300 font-bold">
+                                                                                        {(animalStat.total_kills / animalStat.total_diamonds).toFixed(1)}
+                                                                                    </span>
+                                                                                </div>
+                                                                            )}
+                                                                            {animalStat.total_great_ones > 0 && (
+                                                                                <div className="flex justify-between">
+                                                                                    <span className="text-stone-500">Abat./GO:</span>
+                                                                                    <span className="text-go-gold font-bold">
+                                                                                        {(animalStat.total_kills / animalStat.total_great_ones).toFixed(1)}
+                                                                                    </span>
+                                                                                </div>
+                                                                            )}
+                                                                            {animalStat.total_rares > 0 && (
+                                                                                <div className="flex justify-between">
+                                                                                    <span className="text-stone-500">Abat./Raro:</span>
+                                                                                    <span className="text-purple-300 font-bold">
+                                                                                        {(animalStat.total_kills / animalStat.total_rares).toFixed(1)}
+                                                                                    </span>
+                                                                                </div>
+                                                                            )}
+
+                                                                            {/* Super Raros */}
+                                                                            {animalStat.super_rares > 0 && (
+                                                                                <div className="flex justify-between">
+                                                                                    <span className="text-stone-500">Abat./💎⭐:</span>
+                                                                                    <span className="text-cyan-300 font-bold">
+                                                                                        {(animalStat.total_kills / animalStat.super_rares).toFixed(1)}
+                                                                                    </span>
+                                                                                </div>
+                                                                            )}
+                                                                        </div>
+                                                                    )}
+
+                                                                    {/* Super Raros capturados */}
+                                                                    {animalStat.super_rare_types && animalStat.super_rare_types.length > 0 && (
+                                                                        <div className="mt-2 pt-2 border-t border-stone-700">
+                                                                            <h6 className="text-stone-500 uppercase text-[8px] font-bold mb-1">Super Raros (💎 + ⭐)</h6>
+                                                                            <div className="text-[9px] text-stone-400 space-y-0.5">
+                                                                                {animalStat.super_rare_types.map((type: string, idx: number) => (
+                                                                                    <div key={idx} className="flex items-start gap-1">
+                                                                                        <span className="text-cyan-400">💎⭐</span>
+                                                                                        <span>{type}</span>
+                                                                                    </div>
+                                                                                ))}
+                                                                            </div>
+                                                                        </div>
+                                                                    )}
+                                                                </div>
+                                                            )}
+                                                        </div>
+                                                    );
+                                                })}
+
+                                            {historicalStats.filter(a =>
+                                                a.animal_name.toLowerCase().includes(statsSearch.toLowerCase())
+                                            ).length === 0 && (
+                                                    <div className="text-center text-stone-500 py-4 text-xs">
+                                                        <i className="fa-solid fa-search text-2xl mb-2 opacity-30"></i>
+                                                        <p>Nenhum animal encontrado</p>
+                                                    </div>
+                                                )}
+                                        </>
+                                    ) : !session ? (
+                                        <div className="text-center text-stone-500 py-8">
+                                            <i className="fa-solid fa-chart-line text-4xl mb-4 opacity-30"></i>
+                                            <p className="text-sm">Nenhuma sessão encontrada</p>
+                                            <p className="text-xs mt-2">Comece uma caçada para ver suas estatísticas</p>
+                                        </div>
+                                    ) : null}
                                 </div>
                             </div>
+                        )}
 
-                            <div className="flex-1 overflow-y-auto p-4">
-                                {furTypes.length === 0 ? (
-                                    <div className="text-center text-stone-500 py-8">
-                                        <i className="fa-solid fa-circle-notch fa-spin text-4xl mb-4 opacity-30"></i>
-                                        <p className="text-sm">Carregando tipos de pelagem...</p>
+                        {/* FUR TYPES MODAL */}
+                        {showFurTypes && (
+                            <div className="absolute inset-0 z-50 bg-stone-950/95 backdrop-blur-md flex flex-col ">
+                                <div className="p-4 border-b border-white/10 flex justify-between items-center bg-stone-900 shadow-lg">
+                                    <h3 className="font-serif text-white uppercase tracking-wider text-sm">
+                                        <i className="fa-solid fa-star text-purple-400 mr-2"></i> Pelagem
+                                    </h3>
+                                    <button
+                                        onClick={() => setShowFurTypes(false)}
+                                        className="text-stone-400 hover:text-white transition-colors w-8 h-8 flex items-center justify-center rounded-full hover:bg-white/10"
+                                    >
+                                        <i className="fa-solid fa-xmark text-lg"></i>
+                                    </button>
+                                </div>
+
+                                {/* Search Input */}
+                                <div className="p-3 border-b border-white/10">
+                                    <div className="relative">
+                                        <i className="fa-solid fa-search absolute left-3 top-1/2 -translate-y-1/2 text-stone-500 text-xs"></i>
+                                        <input
+                                            type="text"
+                                            placeholder="Buscar pelagem..."
+                                            value={furTypeSearch}
+                                            onChange={(e) => setFurTypeSearch(e.target.value)}
+                                            className="w-full bg-stone-800 border border-stone-700 rounded pl-9 pr-3 py-2 text-xs text-white placeholder-stone-500 focus:outline-none focus:border-purple-500 transition-colors"
+                                        />
                                     </div>
-                                ) : filteredFurTypes.length === 0 ? (
-                                    <div className="text-center text-stone-500 py-8">
-                                        <i className="fa-solid fa-search text-4xl mb-4 opacity-30"></i>
-                                        <p className="text-sm">Nenhuma pelagem encontrada</p>
-                                    </div>
-                                ) : (
-                                    <div className="space-y-2">
-                                        {filteredFurTypes.map((furType) => (
-                                            <div
-                                                key={furType.id}
-                                                onClick={() => handleFurTypeSelect(furType)}
-                                                className="bg-stone-800/50 border border-stone-700 p-2 rounded-sm hover:border-purple-500 hover:bg-purple-900/20 transition-colors cursor-pointer"
-                                            >
-                                                <p className="text-white font-bold text-xs flex items-center gap-2">
-                                                    <i className="fa-solid fa-star text-purple-400"></i>
-                                                    {furType.name}
-                                                </p>
-                                            </div>
-                                        ))}
-                                    </div>
-                                )}
+                                </div>
+
+                                <div className="flex-1 overflow-y-auto p-4">
+                                    {furTypes.length === 0 ? (
+                                        <div className="text-center text-stone-500 py-8">
+                                            <i className="fa-solid fa-circle-notch fa-spin text-4xl mb-4 opacity-30"></i>
+                                            <p className="text-sm">Carregando tipos de pelagem...</p>
+                                        </div>
+                                    ) : filteredFurTypes.length === 0 ? (
+                                        <div className="text-center text-stone-500 py-8">
+                                            <i className="fa-solid fa-search text-4xl mb-4 opacity-30"></i>
+                                            <p className="text-sm">Nenhuma pelagem encontrada</p>
+                                        </div>
+                                    ) : (
+                                        <div className="space-y-2">
+                                            {filteredFurTypes.map((furType) => (
+                                                <div
+                                                    key={furType.id}
+                                                    onClick={() => handleFurTypeSelect(furType)}
+                                                    className="bg-stone-800/50 border border-stone-700 p-2 rounded-sm hover:border-purple-500 hover:bg-purple-900/20 transition-colors cursor-pointer"
+                                                >
+                                                    <p className="text-white font-bold text-xs flex items-center gap-2">
+                                                        <i className="fa-solid fa-star text-purple-400"></i>
+                                                        {furType.name}
+                                                    </p>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    )}
+                                </div>
                             </div>
-                        </div>
-                    )}
+                        )}
+                    </div>
+
+                    {/* Decorative elements */}
+                    <div className="absolute bottom-8 left-8 hidden md:block text-stone-500/50 text-[10px] font-mono tracking-widest">
+                        STATUS: ONLINE<br />
+                        SERVER: HIRSCHFELDEN-01
+                    </div>
                 </div>
 
-                {/* Decorative elements */}
-                <div className="absolute bottom-8 left-8 hidden md:block text-stone-500/50 text-[10px] font-mono tracking-widest">
-                    STATUS: ONLINE<br />
-                    SERVER: HIRSCHFELDEN-01
+                {/* Hamburger Menu */}
+                <HamburgerMenu
+                    show={showMenu}
+                    onClose={() => setShowMenu(false)}
+                    fontSize={fontSize}
+                    onFontSizeChange={updateFontSize}
+                    onResetStats={handleResetStats}
+                    onShowAbout={() => {
+                        setShowMenu(false);
+                        setShowAbout(true);
+                    }}
+                    onShowGuide={() => {
+                        setShowMenu(false);
+                        window.ipcRenderer.send('open-user-guide');
+                    }}
+                    onShowMigration={() => setShowMigration(true)}
+                />
+
+                {/* Confirmation Modal */}
+                <ConfirmationModal
+                    show={confirmModal.show}
+                    title={confirmModal.title}
+                    message={confirmModal.message}
+                    confirmText={confirmModal.confirmText}
+                    confirmColor={confirmModal.confirmColor}
+                    onConfirm={() => {
+                        confirmModal.onConfirm();
+                        setConfirmModal(prev => ({ ...prev, show: false }));
+                    }}
+                    onCancel={() => setConfirmModal(prev => ({ ...prev, show: false }))}
+                />
+
+                <div className="flex h-screen overflow-hidden relative">
+                    {/* Main Content */}
+                    <div className={`flex-1 transition-all duration-300 ${showNeedZonesPanel ? 'mr-[600px]' : ''}`}>
+                        {/* Modals */}
+                        <NeedZonesModal show={showNeedZones} onClose={() => setShowNeedZones(false)} />
+                        <MigrationModal show={showMigration} onClose={() => setShowMigration(false)} />
+                        <AboutModal
+                            show={showAbout}
+                            onClose={() => setShowAbout(false)}
+                        />
+
+                        <style>{`
+                    .glass-panel {
+                        background: rgba(26, 26, 26, 0.4);
+                        backdrop-filter: blur(3px);
+                        -webkit-backdrop-filter: blur(3px);
+                        border: 1px solid rgba(255, 255, 255, 0.1);
+                    }
+
+                    @keyframes neonBorder {
+                        0% {
+                            box-shadow: 
+                                0 0 5px rgba(217, 93, 30, 0.5),
+                                inset 0 0 5px rgba(217, 93, 30, 0.2);
+                        }
+                        25% {
+                            box-shadow: 
+                                0 0 20px rgba(217, 93, 30, 0.8),
+                                0 0 40px rgba(217, 93, 30, 0.6),
+                                inset 0 0 20px rgba(217, 93, 30, 0.4);
+                        }
+                        50% {
+                            box-shadow: 
+                                0 0 30px rgba(217, 93, 30, 1),
+                                0 0 60px rgba(217, 93, 30, 0.8),
+                                inset 0 0 30px rgba(217, 93, 30, 0.6);
+                        }
+                        75% {
+                            box-shadow: 
+                                0 0 20px rgba(217, 93, 30, 0.8),
+                                0 0 40px rgba(217, 93, 30, 0.6),
+                                inset 0 0 20px rgba(217, 93, 30, 0.4);
+                        }
+                        100% {
+                            box-shadow: 
+                                0 0 5px rgba(217, 93, 30, 0.5),
+                                inset 0 0 5px rgba(217, 93, 30, 0.2);
+                        }
+                    }
+                    .neon-border-active {
+                        animation: neonBorder 1.5s ease-in-out;
+                        border-color: rgba(217, 93, 30, 0.8) !important;
+                    }
+                    @keyframes greatOneGlow {
+                        0%, 100% {
+                            box-shadow: 
+                                0 0 10px rgba(255, 215, 0, 0.3),
+                                0 0 20px rgba(255, 215, 0, 0.2),
+                                inset 0 0 10px rgba(255, 215, 0, 0.1);
+                            border-color: rgba(255, 215, 0, 0.4);
+                        }
+                        50% {
+                            box-shadow: 
+                                0 0 20px rgba(255, 215, 0, 0.6),
+                                0 0 40px rgba(255, 215, 0, 0.4),
+                                0 0 60px rgba(255, 215, 0, 0.2),
+                                inset 0 0 20px rgba(255, 215, 0, 0.2);
+                            border-color: rgba(255, 215, 0, 0.8);
+                        }
+                    }
+                    .great-one-glow {
+                        animation: greatOneGlow 2s ease-in-out infinite;
+                        border-width: 2px;
+                        position: relative;
+                    }
+                `}</style>
+                    </div>
                 </div>
             </div>
 
-            <style>{`
-        .glass-panel {
-          background: rgba(26, 26, 26, 0.85);
-          backdrop-filter: blur(8px);
-          border: 1px solid rgba(255, 255, 255, 0.1);
-        }
-      `}</style>
+            {/* Side Panel - Slides from right */}
+            <NeedZonesPanel show={showNeedZonesPanel} onClose={() => setShowNeedZonesPanel(false)} />
         </div>
     );
-};
+}

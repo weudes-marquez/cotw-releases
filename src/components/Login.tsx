@@ -1,8 +1,9 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { signInWithEmailAndPassword } from 'firebase/auth';
 import { auth } from '../firebase';
 import { useNavigate } from 'react-router-dom';
 import { sanitizeLoginCredentials, rateLimiter } from '../utils/sanitize';
+import { securityLogger } from '../utils/securityLogger';
 
 export const Login = () => {
     const [email, setEmail] = useState('');
@@ -44,35 +45,40 @@ export const Login = () => {
 
         if (!sanitized.isValid) {
             setError(sanitized.errors.join('. '));
+            securityLogger.logLoginFailure(email, 'Invalid credentials format');
             return;
         }
 
         // Rate limiting - máximo 5 tentativas por minuto
         if (!rateLimiter.canProceed(sanitized.email, 5, 60000)) {
             setError('Muitas tentativas de login. Aguarde 1 minuto e tente novamente.');
+            securityLogger.logSuspiciousActivity(undefined, `Rate limit exceeded for ${sanitized.email}`);
             return;
         }
 
         setLoading(true);
 
         try {
-            console.log('🔐 Step 1: Authenticating with Firebase...');
+
 
             // Step 1: Authenticate with Firebase (client-side) usando credenciais sanitizadas
             const userCredential = await signInWithEmailAndPassword(auth, sanitized.email, sanitized.password);
             const user = userCredential.user;
-            console.log('✅ Firebase authentication successful!');
+
+
+            // Log successful login
+            securityLogger.logLoginSuccess(user.uid, sanitized.email);
 
             // Resetar rate limiter após sucesso
             rateLimiter.reset(sanitized.email);
 
             // Step 2: Get the idToken
-            console.log('🎫 Step 2: Getting idToken...');
+
             const idToken = await user.getIdToken(true); // Force refresh
-            console.log('✅ idToken obtained');
+
 
             // Step 3: Send idToken to backend API to create session
-            console.log('🌐 Step 3: Creating session on backend...');
+
             const response = await fetch('https://cotwpinplanner.app/api/login', {
                 method: 'POST',
                 headers: {
@@ -87,53 +93,81 @@ export const Login = () => {
             }
 
             const responseData = await response.json();
-            console.log('✅ Session created successfully!', responseData);
+
 
             // Navigate to dashboard
             navigate('/dashboard');
         } catch (err: any) {
             console.error('❌ Login error:', err);
-            setError(getErrorMessage(err));
+            const errorMessage = getErrorMessage(err);
+            setError(errorMessage);
+            securityLogger.logLoginFailure(sanitized.email, err.message || 'Unknown error');
         } finally {
             setLoading(false);
         }
     };
 
+    // Resize window for login screen
+    useEffect(() => {
+        if ((window as any).ipcRenderer) {
+            (window as any).ipcRenderer.send('resize-window', 480, 640);
+        }
+    }, []);
+
     return (
-        <div className="h-screen w-full overflow-hidden bg-stone-dark text-gray-100 font-sans relative">
+        <div className="h-screen w-full overflow-hidden bg-stone-dark text-gray-100 font-sans relative flex items-center justify-center p-4">
+            {/* Background Layers */}
             {/* Background Layers */}
             <div className="absolute inset-0 w-full h-full overflow-hidden z-0 pointer-events-none">
-                {/* Imagem com efeito de Zoom lento */}
+                {/* Image Background */}
                 <div
-                    className="absolute inset-0 animate-ken-burns"
-                    style={{
-                        backgroundImage: 'url(https://images.unsplash.com/photo-1519331379826-f9686293dea8?q=80&w=2560&auto=format&fit=crop)',
-                        backgroundSize: 'cover',
-                        backgroundPosition: 'center'
-                    }}
+                    className="absolute inset-0 bg-cover bg-center bg-no-repeat opacity-100"
+                    style={{ backgroundImage: "url('cotw-nature-05.webp')" }}
                 ></div>
-                {/* Overlay Escuro para legibilidade */}
-                <div className="absolute inset-0 bg-gradient-to-b from-black/70 via-stone-900/80 to-black/95"></div>
-                {/* Overlay de Vinheta */}
-                <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,_var(--tw-gradient-stops))] from-transparent to-black opacity-90"></div>
-
-                {/* Crosshairs Background Icon */}
-                <div className="absolute inset-0 flex items-center justify-center opacity-5">
-                    <i className="fa-solid fa-crosshairs text-[400px] text-white"></i>
-                </div>
+                {/* Gradient Overlay - Reduced opacity for better visibility */}
+                <div className="absolute inset-0 bg-gradient-to-br from-stone-900/70 via-stone-950/60 to-black/80"></div>
             </div>
 
-            {/* Main Container */}
-            <div className="relative z-10 flex items-center justify-center h-full">
+            {/* Close Button - Top Right */}
+            <button
+                onClick={() => window.close()}
+                className="absolute top-4 right-4 z-50 w-8 h-8 rounded-full bg-red-600/80 hover:bg-red-500 text-white  flex items-center justify-center shadow-lg hover:shadow-red-500/50 active:scale-95"
+                title="Fechar aplicativo"
+            >
+                <i className="fa-solid fa-xmark text-lg"></i>
+            </button>
+
+            {/* Main Container - Centered with fixed width for padding effect */}
+            <div className="relative z-10 w-80 space-y-3">
+                {/* Important Notices */}
+                <div className="bg-yellow-900/30 backdrop-blur-sm border border-yellow-600/50 rounded-sm p-3 shadow-lg">
+                    <h3 className="text-yellow-400 font-bold uppercase text-[10px] tracking-wider mb-2 flex items-center gap-2">
+                        <i className="fa-solid fa-triangle-exclamation"></i> Avisos Importantes
+                    </h3>
+                    <ul className="space-y-1.5 text-[10px] text-stone-300">
+                        <li className="flex gap-2">
+                            <i className="fa-solid fa-shield-halved text-yellow-500 mt-0.5 shrink-0"></i>
+                            <span>Antivírus pode detectar como malicioso (falso positivo). Marque como seguro se necessário.</span>
+                        </li>
+                        <li className="flex gap-2">
+                            <i className="fa-solid fa-gamepad text-yellow-500 mt-0.5 shrink-0"></i>
+                            <span><strong>No jogo:</strong> Pressione <kbd className="px-1 py-0.5 bg-stone-800 border border-stone-600 rounded text-[9px] font-mono">ALT + Enter</kbd> para ativar modo janela sem borda.</span>
+                        </li>
+                    </ul>
+                </div>
+
                 {/* Login Card */}
-                <div className="w-full max-w-md bg-stone-900/80 backdrop-blur-sm border border-white/10 p-6 shadow-2xl rounded-sm animate-fade-in relative overflow-hidden group">
+                <div className="w-full bg-stone-900/80 backdrop-blur-sm border border-white/10 p-5 shadow-2xl rounded-sm relative overflow-hidden group">
                     {/* Decorative Top Line (Hunter Orange) */}
                     <div className="absolute top-0 left-0 w-full h-1 bg-hunter-orange shadow-[0_0_10px_rgba(217,93,30,0.5)]"></div>
 
+                    {/* Window Drag Handle */}
+                    <div className="absolute top-0 left-0 w-full h-8 z-50 drag-region" />
+
                     {/* Header */}
-                    <div className="text-center mb-4 space-y-1">
-                        {/* Logo + Title (Inline) */}
-                        <div className="flex items-center justify-center gap-3">
+                    <div className="mb-3 space-y-1">
+                        {/* Logo + Title (Aligned Left) */}
+                        <div className="flex items-center gap-3">
                             <img
                                 src="/build/icon.png"
                                 alt="Logo"
@@ -151,7 +185,7 @@ export const Login = () => {
                     </div>
 
                     {/* Form */}
-                    <form onSubmit={handleSubmit} className="space-y-3">
+                    <form onSubmit={handleSubmit} className="space-y-2.5">
                         {/* Email Input */}
                         <div className="group/input">
                             <label
@@ -170,7 +204,7 @@ export const Login = () => {
                                     required
                                     value={email}
                                     onChange={(e) => setEmail(e.target.value)}
-                                    className="block w-full pl-10 pr-3 py-2 bg-stone-800/50 border border-stone-600 text-stone-100 placeholder-stone-600 focus:outline-none focus:border-hunter-orange focus:bg-stone-800 transition-all duration-300 rounded-none text-sm"
+                                    className="block w-full pl-10 pr-3 py-2 bg-stone-800/50 border border-stone-600 text-stone-100 placeholder-stone-600 focus:outline-none focus:border-hunter-orange focus:bg-stone-800   rounded-none text-sm"
                                     placeholder="seu@email.com"
                                 />
                             </div>
@@ -194,7 +228,7 @@ export const Login = () => {
                                     required
                                     value={password}
                                     onChange={(e) => setPassword(e.target.value)}
-                                    className="block w-full pl-10 pr-12 py-2 bg-stone-800/50 border border-stone-600 text-stone-100 placeholder-stone-600 focus:outline-none focus:border-hunter-orange focus:bg-stone-800 transition-all duration-300 rounded-none text-sm"
+                                    className="block w-full pl-10 pr-12 py-2 bg-stone-800/50 border border-stone-600 text-stone-100 placeholder-stone-600 focus:outline-none focus:border-hunter-orange focus:bg-stone-800   rounded-none text-sm"
                                     placeholder="••••••••"
                                 />
                                 {/* Toggle Password Visibility */}
@@ -210,7 +244,7 @@ export const Login = () => {
 
                         {/* Error Message */}
                         {error && (
-                            <div className="bg-red-900/30 border border-red-500/50 text-red-200 px-4 py-3 rounded-sm text-sm">
+                            <div className="bg-red-900/30 border border-red-500/50 text-red-200 px-3 py-2 rounded-sm text-xs">
                                 <i className="fa-solid fa-exclamation-triangle mr-2"></i>
                                 {error}
                             </div>
@@ -220,12 +254,12 @@ export const Login = () => {
                         <button
                             type="submit"
                             disabled={loading}
-                            className="relative w-full bg-hunter-orange hover:bg-hunter-orange/90 text-white font-bold py-2.5 px-4 transition-all duration-300 uppercase tracking-[0.15em] text-xs shadow-lg hover:shadow-hunter-orange/50 disabled:opacity-50 disabled:cursor-not-allowed group overflow-hidden active:scale-[0.98]"
+                            className="relative w-full bg-hunter-orange hover:bg-hunter-orange/90 text-white font-bold py-2.5 px-4   uppercase tracking-[0.15em] text-xs shadow-lg hover:shadow-hunter-orange/50 disabled:opacity-50 disabled:cursor-not-allowed group overflow-hidden active:scale-[0.98]"
                         >
                             {loading ? (
                                 <i className="fa-solid fa-circle-notch fa-spin text-white"></i>
                             ) : (
-                                <span className="relative z-10 flex items-center gap-2">
+                                <span className="relative z-10 flex items-center gap-2 justify-center">
                                     Entrar <i className="fa-solid fa-arrow-right group-hover:translate-x-1 transition-transform"></i>
                                 </span>
                             )}
@@ -237,8 +271,8 @@ export const Login = () => {
                     </form>
 
                     {/* Footer */}
-                    <div className="mt-5 text-center border-t border-white/10 pt-3">
-                        <p className="text-stone-500 text-[10px]">
+                    <div className="mt-4 text-center border-t border-white/10 pt-3">
+                        <p className="text-stone-500 text-[10px] mb-1.5">
                             Gerencie suas zonas de caça e grind no{' '}
                             <a
                                 href="https://cotwpinplanner.app"
@@ -250,6 +284,19 @@ export const Login = () => {
                             </a>
                         </p>
                     </div>
+                </div>
+
+                {/* Guide Button - Below Login Container */}
+                <div className="mt-6 flex justify-center z-10 relative">
+                    <button
+                        onClick={() => {
+                            (window as any).ipcRenderer.send('open-user-guide');
+                        }}
+                        className="flex items-center gap-2 px-6 py-2.5 bg-stone-900/80 hover:bg-hunter-orange text-stone-400 hover:text-white rounded-full border border-white/10 hover:border-hunter-orange   text-xs font-bold uppercase tracking-wider group backdrop-blur-sm shadow-lg"
+                    >
+                        <i className="fa-solid fa-book text-sm group-hover:scale-110 transition-transform"></i>
+                        <span>Guia de Uso e Atalhos</span>
+                    </button>
                 </div>
 
                 {/* Decorative elements mimicking HUD */}

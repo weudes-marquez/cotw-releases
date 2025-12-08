@@ -48,6 +48,22 @@ export interface KillRecord {
     killed_at: string;
 }
 
+export interface MapData {
+    id: string;
+    name: string;
+    firestore_id?: string;
+}
+
+export interface NeedZoneData {
+    id: string;
+    species_name: string;
+    map_id: string;
+    zone_type: string;
+    start_time: string;
+    end_time: string;
+    map_name?: string; // For UI convenience after join
+}
+
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || '';
 const supabaseKey = import.meta.env.VITE_SUPABASE_ANON_KEY || '';
 
@@ -65,26 +81,46 @@ export const supabase = (supabaseUrl && supabaseKey)
     } as any;
 
 /**
- * Troca o token do Firebase por uma sessão do Supabase via Edge Function
+ * Autentica o usuário Firebase no Supabase (sign in anônimo com metadados)
+ * Cria user_id customizado baseado no Firebase UID
  */
 export async function authenticateWithFirebase(firebaseToken: string) {
     try {
-        const { data, error } = await supabase.functions.invoke('firebase-auth', {
-            body: { token: firebaseToken }
+
+
+        // Decodificar o token Firebase para pegar o email/uid
+        const base64Url = firebaseToken.split('.')[1];
+        const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/');
+        const jsonPayload = decodeURIComponent(atob(base64).split('').map(function (c) {
+            return '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2);
+        }).join(''));
+
+        const payload = JSON.parse(jsonPayload);
+        const firebaseEmail = payload.email;
+        const firebaseUid = payload.user_id || payload.sub;
+
+
+
+        // Tentar fazer login anônimo no Supabase (não requer credenciais)
+        // Isso criará um auth.uid() válido que o RLS pode usar
+        const { data: anonData, error: anonError } = await supabase.auth.signInAnonymously({
+            options: {
+                data: {
+                    firebase_uid: firebaseUid,
+                    firebase_email: firebaseEmail
+                }
+            }
         });
 
-        if (error) throw error;
-
-        if (data?.token) {
-            await supabase.auth.setSession({
-                access_token: data.token,
-                refresh_token: data.refreshToken || '',
-            });
-            return true;
+        if (anonError) {
+            console.error('❌ Erro no login anônimo:', anonError);
+            return false;
         }
-        return false;
+
+
+        return true;
     } catch (err) {
-        console.error('Erro na autenticação segura:', err);
+        console.error('❌ Erro na autenticação Firebase→Supabase:', err);
         return false;
     }
 }
@@ -178,8 +214,8 @@ export async function getUserProfile(userId: string) {
 export async function getSpecies() {
     const { data, error } = await supabase
         .from('species')
-        .select('id, name') // Select only needed columns
-        .order('name', { ascending: true });
+        .select('id, name_enus, name_ptbr')
+        .order('name_ptbr', { ascending: true });
 
     if (error) throw error;
 
@@ -269,7 +305,7 @@ export async function getUserHistoricalStats(userId: string) {
         .order('start_date', { ascending: false });
 
     if (sessionsError) {
-        console.error('Erro ao buscar sessões:', sessionsError);
+        console.error('❌ [STATS ERROR] Erro ao buscar sessões:', sessionsError);
         return [];
     }
 
@@ -277,16 +313,17 @@ export async function getUserHistoricalStats(userId: string) {
         return [];
     }
 
-    // Buscar todos os kills do usuário
-    const sessionIds = sessions.map((s: any) => s.id);
+    // Buscar todos os kills do usuário (incluindo fur_type_name para raros)
+    // Otimização: Buscar por user_id ao invés de lista de session_ids para evitar limites de query URL
     const { data: kills, error: killsError } = await supabase
         .from('kill_records')
-        .select('session_id, is_diamond, is_great_one')
-        .in('session_id', sessionIds);
+        .select('session_id, is_diamond, is_great_one, fur_type_id, fur_type_name')
+        .eq('user_id', supabaseId);
 
     if (killsError) {
         console.error('Erro ao buscar kills:', killsError);
-        return [];
+        // Não retornar vazio, tentar continuar com o que tem (apenas totais de kills)
+        // return [];
     }
 
     // Agrupar por animal
@@ -294,8 +331,13 @@ export async function getUserHistoricalStats(userId: string) {
         animal_id: string;
         animal_name: string;
         total_kills: number;
+        total_sessions: number; // Novo campo
         total_diamonds: number;
         total_great_ones: number;
+        total_rares: number;
+        rare_types: string[];
+        super_rares: number;
+        super_rare_types: string[];
         last_session_date: string;
         has_active_session: boolean;
     }> = {};
@@ -308,15 +350,26 @@ export async function getUserHistoricalStats(userId: string) {
                 animal_id: session.animal_id,
                 animal_name: session.animal_name,
                 total_kills: 0,
+                total_sessions: 0, // Novo campo
                 total_diamonds: 0,
                 total_great_ones: 0,
+                total_rares: 0,
+                rare_types: [],
+                super_rares: 0,
+                super_rare_types: [],
                 last_session_date: session.start_date,
                 has_active_session: session.is_active
             };
         }
 
         // Somar kills da sessão
-        animalStats[animalKey].total_kills += session.total_kills || 0;
+        const killsInSession = session.total_kills || 0;
+        animalStats[animalKey].total_kills += killsInSession;
+
+        // Contar sessão se tiver pelo menos 1 abate
+        if (killsInSession > 0) {
+            animalStats[animalKey].total_sessions += 1;
+        }
 
         // Atualizar data mais recente
         if (new Date(session.start_date) > new Date(animalStats[animalKey].last_session_date)) {
@@ -329,28 +382,150 @@ export async function getUserHistoricalStats(userId: string) {
         }
     });
 
-    // Contar diamantes e GOs por animal
+    // Contar diamantes, GOs, raros e super raros por animal
     if (kills) {
         kills.forEach((kill: any) => {
             const session = sessions.find((s: any) => s.id === kill.session_id);
             if (session) {
                 const animalKey = session.animal_id;
-                if (animalStats[animalKey]) {
-                    if (kill.is_diamond) animalStats[animalKey].total_diamonds++;
-                    if (kill.is_great_one) animalStats[animalKey].total_great_ones++;
+
+                if (kill.is_diamond) animalStats[animalKey].total_diamonds++;
+                if (kill.is_great_one) animalStats[animalKey].total_great_ones++;
+
+                // Se tem fur_type_id, é um raro
+                if (kill.fur_type_id) {
+                    animalStats[animalKey].total_rares++;
+                    if (kill.fur_type_name && !animalStats[animalKey].rare_types.includes(kill.fur_type_name)) {
+                        animalStats[animalKey].rare_types.push(kill.fur_type_name);
+                    }
+
+                    // Se é diamante E raro = super raro
+                    if (kill.is_diamond) {
+                        animalStats[animalKey].super_rares++;
+                        const superRareName = `${session.animal_name} diamante ${kill.fur_type_name}`;
+                        if (!animalStats[animalKey].super_rare_types.includes(superRareName)) {
+                            animalStats[animalKey].super_rare_types.push(superRareName);
+                        }
+                    }
                 }
             }
         });
     }
 
-    // Converter para array e ordenar por total de kills (maior primeiro)
-    return Object.values(animalStats).sort((a, b) => b.total_kills - a.total_kills);
+    // Converter para array, filtrar inválidos e ordenar por total de kills (maior primeiro)
+    const stats = Object.values(animalStats)
+        .filter(stat => stat.animal_name && (stat.total_kills > 0 || stat.has_active_session)) // Mostrar se tem kills OU se é sessão ativa
+        .sort((a, b) => b.total_kills - a.total_kills);
+
+    return stats;
 }
+
+/**
+ * Buscar estatísticas globais do usuário (todas as sessões combinadas)
+ */
+export async function getTotalGlobalStats(userId: string) {
+    const supabaseId = getSupabaseUserId(userId);
+
+    // Buscar todas as sessões
+    const { data: sessions, error: sessionsError } = await supabase
+        .from('grind_sessions')
+        .select('id, total_kills')
+        .eq('user_id', supabaseId);
+
+    if (sessionsError) {
+        console.error('Erro ao buscar sessões globais:', sessionsError);
+        return { total_kills: 0, total_diamonds: 0, total_great_ones: 0, total_rares: 0, rare_types: [] };
+    }
+
+    if (!sessions || sessions.length === 0) {
+        return { total_kills: 0, total_diamonds: 0, total_great_ones: 0, total_rares: 0, rare_types: [] };
+    }
+
+    // Buscar todos os kills
+    const sessionIds = sessions.map((s: any) => s.id);
+    const { data: kills, error: killsError } = await supabase
+        .from('kill_records')
+        .select('is_diamond, is_great_one, fur_type_id, fur_type_name')
+        .in('session_id', sessionIds);
+
+    if (killsError) {
+        console.error('Erro ao buscar kills globais:', killsError);
+        return { total_kills: 0, total_diamonds: 0, total_great_ones: 0, total_rares: 0, rare_types: [] };
+    }
+
+    // Calcular totais
+    const total_kills = sessions.reduce((sum: number, s: any) => sum + (s.total_kills || 0), 0);
+    let total_diamonds = 0;
+    let total_great_ones = 0;
+    let total_rares = 0;
+    const rare_types_set = new Set<string>();
+
+    kills?.forEach((k: any) => {
+        if (k.is_diamond) total_diamonds++;
+        if (k.is_great_one) total_great_ones++;
+        if (k.fur_type_id) {
+            total_rares++;
+            if (k.fur_type_name) rare_types_set.add(k.fur_type_name);
+        }
+    });
+
+    return {
+        total_kills,
+        total_diamonds,
+        total_great_ones,
+        total_rares,
+        rare_types: Array.from(rare_types_set)
+    };
+}
+
+/**
+ * Deletar todas as estatísticas do usuário (opcionalmente filtrando por animal)
+ */
+export async function deleteAllUserStats(userId: string, animalId?: string) {
+    const supabaseId = getSupabaseUserId(userId);
+
+    // Deletar kills primeiro (foreign key)
+    let killsQuery = supabase
+        .from('kill_records')
+        .delete()
+        .eq('user_id', supabaseId);
+
+    if (animalId) {
+        killsQuery = killsQuery.eq('animal_id', animalId);
+    }
+
+    const { error: killsError } = await killsQuery;
+
+    if (killsError) {
+        console.error('Erro ao deletar kills:', killsError);
+        throw killsError;
+    }
+
+    // Deletar sessões
+    let sessionsQuery = supabase
+        .from('grind_sessions')
+        .delete()
+        .eq('user_id', supabaseId);
+
+    if (animalId) {
+        sessionsQuery = sessionsQuery.eq('animal_id', animalId);
+    }
+
+    const { error: sessionsError } = await sessionsQuery;
+
+    if (sessionsError) {
+        console.error('Erro ao deletar sessões:', sessionsError);
+        throw sessionsError;
+    }
+
+
+}
+
 
 /**
  * Criar nova sessão de grind
  */
-export async function createGrindSession(userId: string, animalId: string, animalName: string) {
+export async function createGrindSession(userId: string, animalId: string, animalName: string, initialCount: number = 0) {
     const supabaseId = getSupabaseUserId(userId);
     const { data, error } = await supabase
         .from('grind_sessions')
@@ -358,6 +533,7 @@ export async function createGrindSession(userId: string, animalId: string, anima
             user_id: supabaseId,
             animal_id: animalId,
             animal_name: animalName,
+            total_kills: initialCount,
             is_active: true
         })
         .select()
@@ -419,14 +595,6 @@ export async function registerKill(
 ) {
     const supabaseId = getSupabaseUserId(userId);
 
-    console.log('📝 Registrando abate:', {
-        sessionId,
-        supabaseId,
-        animalId,
-        killNumber,
-        isDiamond,
-        isGreatOne
-    });
 
     const { data, error } = await supabase
         .from('kill_records')
@@ -448,7 +616,20 @@ export async function registerKill(
         throw error;
     }
 
-    console.log('✅ Abate registrado com sucesso:', data);
+
+
+    // Atualizar o total_kills na sessão
+
+    const { error: updateError } = await supabase
+        .from('grind_sessions')
+        .update({ total_kills: killNumber }) // killNumber já é o novo total
+        .eq('id', sessionId);
+
+    if (updateError) {
+        console.error('❌ Erro ao atualizar sessão:', updateError);
+        // Não lançar erro aqui para não falhar o registro do abate, mas logar
+    }
+
     return data as KillRecord;
 }
 
@@ -539,20 +720,20 @@ export async function getAnimalRanking(userId: string) {
 /**
  * Hook React para usar no Dashboard
  */
-export function useGrindSession(userId: string | undefined, animalId: string, animalName: string) {
+export function useGrindSession(userId: string | undefined, animalId: string, animalName: string, shouldCreate: boolean = false) {
     const [session, setSession] = React.useState<GrindSession | null>(null);
     const [stats, setStats] = React.useState<SessionStatistics | null>(null);
     const [loading, setLoading] = React.useState(false);
     const loadingRef = React.useRef(false);
 
     React.useEffect(() => {
-        if (userId && animalId) {
+        if (userId && animalId && shouldCreate) {
             loadSession();
         } else {
             setSession(null);
             setStats(null);
         }
-    }, [userId, animalId]);
+    }, [userId, animalId, shouldCreate]);
 
     async function loadSession() {
         if (!userId || !animalId || loadingRef.current) return;
@@ -579,70 +760,149 @@ export function useGrindSession(userId: string | undefined, animalId: string, an
     async function addKill(isDiamond = false, isGreatOne = false, furTypeId?: string, furTypeName?: string) {
         if (!session || !userId) return;
 
+        // OPTIMISTIC UPDATE: Atualiza UI imediatamente
+        const previousSession = { ...session };
+        const previousStats = stats ? { ...stats } : null;
+
+        const newKillCount = session.total_kills + 1;
+
+        // Atualiza estado local ANTES de salvar no banco
+        setSession({ ...session, total_kills: newKillCount });
+
+        if (stats) {
+            setStats({
+                ...stats,
+                total_kills: newKillCount,
+                total_diamonds: isDiamond ? stats.total_diamonds + 1 : stats.total_diamonds,
+                total_great_ones: isGreatOne ? stats.total_great_ones + 1 : stats.total_great_ones,
+                total_rare_furs: (furTypeId && furTypeName) ? stats.total_rare_furs + 1 : stats.total_rare_furs
+            });
+        }
+
         try {
-            const killNumber = session.total_kills + 1;
+            // BACKGROUND: Salva no banco de forma atômica
             await registerKill(
                 session.id,
-                userId, // Firebase UID string
+                userId,
                 animalId,
-                killNumber,
+                newKillCount,
                 isDiamond,
                 isGreatOne,
                 furTypeId || null,
                 furTypeName || null
             );
 
-            // Recarregar estatísticas
-            await loadSession();
+            // Sucesso: não recarregar sessão inteira para evitar race condition com cliques rápidos
+            // O estado local já foi atualizado otimisticamente
+            // await loadSession();
         } catch (error) {
-            console.error('Error adding kill:', error);
+            console.error('❌ Erro ao adicionar abate, revertendo...', error);
+
+            // ROLLBACK: Reverte estado local em caso de erro
+            setSession(previousSession);
+            setStats(previousStats);
+
+            alert('Erro ao salvar abate. Verifique sua conexão.');
         }
     }
 
     async function removeLastKill() {
-        if (!session || session.total_kills === 0) {
-            console.log('❌ Não pode remover: sessão inválida ou contador em 0');
+        if (!session) {
+
             return;
         }
 
-        try {
-            console.log('🔍 Buscando último abate...');
-            // Buscar o último abate
-            const { data: kills, error } = await supabase
-                .from('kill_records')
-                .select('id')
-                .eq('session_id', session.id)
-                .order('kill_number', { ascending: false })
-                .limit(1);
+        // Caso 1: Sessão atual tem abates (laranja > 0)
+        // Remove da sessão atual, afetando ambos os contadores
+        if (session.total_kills > 0) {
+            // OPTIMISTIC UPDATE
+            setSession(prev => prev ? { ...prev, total_kills: Math.max(0, prev.total_kills - 1) } : null);
+            setStats(prev => prev ? { ...prev, total_kills: Math.max(0, prev.total_kills - 1) } : null);
 
-            if (error) {
-                console.error('❌ Erro ao buscar último abate:', error);
-                throw error;
-            }
-
-            if (kills && kills.length > 0) {
-                const lastKill = kills[0];
-                console.log('🗑️ Deletando abate:', lastKill.id);
-
-                // Deletar
-                const { error: deleteError } = await supabase
+            try {
+                const { data: kills, error } = await supabase
                     .from('kill_records')
-                    .delete()
-                    .eq('id', lastKill.id);
+                    .select('id')
+                    .eq('session_id', session.id)
+                    .order('kill_number', { ascending: false })
+                    .limit(1);
 
-                if (deleteError) {
-                    console.error('❌ Erro ao deletar:', deleteError);
-                    throw deleteError;
+                if (error) throw error;
+
+                if (kills && kills.length > 0) {
+                    await supabase.from('kill_records').delete().eq('id', kills[0].id);
+
+                    const { count } = await supabase
+                        .from('kill_records')
+                        .select('*', { count: 'exact', head: true })
+                        .eq('session_id', session.id);
+
+                    await supabase
+                        .from('grind_sessions')
+                        .update({ total_kills: count || 0 })
+                        .eq('id', session.id);
+
+                    setSession(prev => prev ? { ...prev, total_kills: count || 0 } : null);
                 }
-
-                console.log('✅ Abate deletado, recarregando sessão...');
-                // Recarregar
+            } catch (error) {
+                console.error('❌ Erro ao remover da sessão atual:', error);
                 await loadSession();
-            } else {
-                console.log('⚠️ Nenhum abate encontrado para deletar');
             }
-        } catch (error) {
-            console.error('Error removing last kill:', error);
+        }
+        // Caso 2: Sessão atual zerada (laranja = 0), mas total branco > 0
+        // Remove da última sessão anterior, afetando apenas o contador branco
+        else if (stats && stats.total_kills > 0) {
+            // OPTIMISTIC UPDATE apenas no total branco
+            setStats(prev => prev ? { ...prev, total_kills: Math.max(0, prev.total_kills - 1) } : null);
+
+            try {
+                if (!userId) return;
+
+                // Buscar última sessão com abates deste animal
+                const { data: prevSessions, error: sessErr } = await supabase
+                    .from('grind_sessions')
+                    .select('id')
+                    .eq('user_id', getSupabaseUserId(userId))
+                    .eq('animal_id', animalId)
+                    .gt('total_kills', 0)
+                    .order('start_date', { ascending: false })
+                    .limit(1);
+
+                if (sessErr) throw sessErr;
+
+                if (prevSessions && prevSessions.length > 0) {
+                    const targetSessionId = prevSessions[0].id;
+
+                    // Buscar último kill dessa sessão
+                    const { data: kills, error: killErr } = await supabase
+                        .from('kill_records')
+                        .select('id')
+                        .eq('session_id', targetSessionId)
+                        .order('kill_number', { ascending: false })
+                        .limit(1);
+
+                    if (killErr) throw killErr;
+
+                    if (kills && kills.length > 0) {
+                        await supabase.from('kill_records').delete().eq('id', kills[0].id);
+
+                        const { count } = await supabase
+                            .from('kill_records')
+                            .select('*', { count: 'exact', head: true })
+                            .eq('session_id', targetSessionId);
+
+                        await supabase
+                            .from('grind_sessions')
+                            .update({ total_kills: count || 0 })
+                            .eq('id', targetSessionId);
+
+
+                    }
+                }
+            } catch (error) {
+                console.error('❌ Erro ao remover de sessão anterior:', error);
+                await loadSession();
+            }
         }
     }
 
@@ -652,14 +912,221 @@ export function useGrindSession(userId: string | undefined, animalId: string, an
             await finishSession(session.id);
             setSession(null);
             setStats(null);
-            // Opcional: Recarregar para criar uma nova imediatamente ou deixar null
-            await loadSession();
+            // Não recarregar - sessão finalizada deve ficar null
         } catch (error) {
             console.error('Error finishing session:', error);
         }
     }
 
     return { session, stats, loading, addKill, removeLastKill, finishCurrentSession, reload: loadSession };
+}
+
+// ============================================================================
+// USER TRACKING - Rastrear atividade do usuário
+// ============================================================================
+export async function trackUserActivity(userId: string, email: string, appVersion: string = '1.0.0') {
+    const supabaseId = getSupabaseUserId(userId);
+    const platform = window.navigator.platform;
+
+    const { error } = await supabase
+        .from('app_users')
+        .upsert({
+            user_id: supabaseId,
+            email: email,
+            last_seen_at: new Date().toISOString(),
+            app_version: appVersion,
+            platform: platform
+        }, { onConflict: 'user_id' });
+
+    if (error) {
+        console.error('Erro ao rastrear atividade do usuário:', error);
+    }
+}
+
+// ============================================================================
+// GET ACTIVE SESSIONS - Buscar todas as sessões ativas (não finalizadas)
+// ============================================================================
+export async function getActiveSessions(userId: string) {
+    const supabaseId = getSupabaseUserId(userId);
+
+    // Buscar todas as sessões ativas do usuário
+    const { data: sessions, error: sessionsError } = await supabase
+        .from('grind_sessions')
+        .select('id, animal_id, animal_name, start_date, total_kills')
+        .eq('user_id', supabaseId)
+        .eq('is_active', true)
+        .order('start_date', { ascending: false });
+
+    if (sessionsError) {
+        console.error('Erro ao buscar sessões ativas:', sessionsError);
+        return [];
+    }
+
+    if (!sessions || sessions.length === 0) {
+        return [];
+    }
+
+    // Buscar estatísticas de cada sessão ativa
+    const sessionIds = sessions.map((s: any) => s.id);
+    const { data: sessionStats, error: statsError } = await supabase
+        .from('session_statistics')
+        .select('session_id, total_kills, total_diamonds, total_great_ones, total_rare_furs')
+        .in('session_id', sessionIds);
+
+    if (statsError) {
+        console.error('Erro ao buscar estatísticas das sessões:', statsError);
+        return [];
+    }
+
+    // Combinar sessões com suas estatísticas
+    const activeSessions = sessions.map((session: any) => {
+        const stats = sessionStats?.find((s: any) => s.session_id === session.id) || {
+            total_kills: 0,
+            total_diamonds: 0,
+            total_great_ones: 0,
+            total_rare_furs: 0
+        };
+
+        return {
+            session_id: session.id,
+            animal_id: session.animal_id,
+            animal_name: session.animal_name,
+            start_date: session.start_date,
+            total_kills: stats.total_kills || 0,
+            total_diamonds: stats.total_diamonds || 0,
+            total_great_ones: stats.total_great_ones || 0,
+            total_rare_furs: stats.total_rare_furs || 0
+        };
+    });
+
+    return activeSessions;
+}
+
+// ============================================================================
+// MIGRATION & NEED ZONES
+// ============================================================================
+
+/**
+ * Buscar todos os mapas
+ */
+export async function getMaps() {
+    const { data, error } = await supabase
+        .from('maps')
+        .select('*')
+        .order('name', { ascending: true });
+
+    if (error) throw error;
+    return data as MapData[];
+}
+
+/**
+ * Buscar Need Zones por espécie (usando species_id)
+ */
+export async function getNeedZones(speciesName: string) {
+    console.log('🔎 getNeedZones called with species:', speciesName);
+    
+    // Primeiro, buscar o ID da espécie pelo nome
+    const { data: speciesData, error: speciesError } = await supabase
+        .from('species')
+        .select('id')
+        .eq('name_ptbr', speciesName)
+        .single();
+
+    if (speciesError || !speciesData) {
+        console.error('❌ Species not found:', speciesName, speciesError);
+        return [];
+    }
+
+    console.log('✅ Found species ID:', speciesData.id);
+
+    // Join com maps para pegar o nome do mapa
+    const { data, error } = await supabase
+        .from('need_zones')
+        .select(`
+            *,
+            maps (
+                name
+            )
+        `)
+        .eq('species_id', speciesData.id);
+
+    console.log('📊 Query result:', { data, error, count: data?.length });
+
+    if (error) {
+        console.error('❌ Supabase error:', error);
+        throw error;
+    }
+
+    // Flatten data for easier consumption
+    const result = data.map((zone: any) => ({
+        ...zone,
+        map_name: zone.maps?.name || 'Unknown Map'
+    })) as NeedZoneData[];
+    
+    console.log('✅ Returning zones:', result.length);
+    return result;
+}
+
+/**
+ * Criar um mapa (usado na migração)
+ */
+export async function createMap(name: string, firestoreId?: string) {
+    // Check if exists first to avoid duplicates during multiple migration runs
+    const { data: existing } = await supabase
+        .from('maps')
+        .select('id')
+        .eq('name', name)
+        .maybeSingle();
+
+    if (existing) return existing;
+
+    const { data, error } = await supabase
+        .from('maps')
+        .insert({ name, firestore_id: firestoreId })
+        .select()
+        .single();
+
+    if (error) throw error;
+    return data;
+}
+
+/**
+ * Criar uma Need Zone (usado na migração)
+ */
+export async function createNeedZone(
+    speciesName: string,
+    mapId: string,
+    zoneType: string,
+    startTime: string,
+    endTime: string
+) {
+    // Check for duplicates (optional but good for idempotency)
+    const { data: existing } = await supabase
+        .from('need_zones')
+        .select('id')
+        .eq('species_name', speciesName)
+        .eq('map_id', mapId)
+        .eq('zone_type', zoneType)
+        .eq('start_time', startTime)
+        .eq('end_time', endTime)
+        .maybeSingle();
+
+    if (existing) return existing;
+
+    const { data, error } = await supabase
+        .from('need_zones')
+        .insert({
+            species_name: speciesName,
+            map_id: mapId,
+            zone_type: zoneType,
+            start_time: startTime,
+            end_time: endTime
+        })
+        .select()
+        .single();
+
+    if (error) throw error;
+    return data;
 }
 
 // ============================================================================

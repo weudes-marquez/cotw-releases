@@ -138,7 +138,7 @@ export function NeedZonesPanel({ show, onClose }: NeedZonesPanelProps) {
 
     return (
         <div
-            className="fixed inset-0 w-full h-full bg-stone-950 shadow-2xl overflow-y-auto z-50"
+            className="fixed top-0 right-0 h-full w-[520px] bg-stone-950 shadow-2xl overflow-y-auto z-50"
             style={{
                 transform: show ? 'translateX(0)' : 'translateX(100%)',
                 transition: 'transform 0.3s ease-out'

@@ -65,9 +65,10 @@ interface HamburgerMenuProps {
     onResetStats: () => void;
     onShowAbout: () => void;
     onShowGuide: () => void;
+    onShowMigration: () => void;
 }
 
-export function HamburgerMenu({ show, onClose, fontSize, onFontSizeChange, onResetStats, onShowAbout, onShowGuide }: HamburgerMenuProps) {
+export function HamburgerMenu({ show, onClose, fontSize, onFontSizeChange, onResetStats, onShowAbout, onShowGuide, onShowMigration }: HamburgerMenuProps) {
     if (!show) return null;
 
     return (
@@ -130,6 +131,14 @@ export function HamburgerMenu({ show, onClose, fontSize, onFontSizeChange, onRes
                     >
                         <i className="fa-solid fa-circle-info"></i>
                         Sobre
+                    </button>
+
+                    <button
+                        onClick={() => { onShowMigration(); onClose(); }}
+                        className="w-full text-left px-3 py-2 bg-yellow-900/30 hover:bg-yellow-800/50 text-yellow-300 hover:text-yellow-200 rounded-sm text-sm flex items-center gap-2"
+                    >
+                        <i className="fa-solid fa-database"></i>
+                        Migrar need_zones
                     </button>
                 </div>
             </div>
