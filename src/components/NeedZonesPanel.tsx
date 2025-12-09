@@ -153,7 +153,7 @@ export function NeedZonesPanel({ show, onClose }: NeedZonesPanelProps) {
                 </button>
             </div>
 
-            <div className="p-3 space-y-2.5">
+            <div className="flex-1 overflow-y-auto p-3 space-y-2.5">
                 {/* Dropdowns Side by Side */}
                 <div className="grid grid-cols-2 gap-2">
                     <select
@@ -179,58 +179,75 @@ export function NeedZonesPanel({ show, onClose }: NeedZonesPanelProps) {
                     </select>
                 </div>
 
-                {/* Search Below */}
-                <div className="relative">
-                    <div className="absolute inset-y-0 left-0 pl-2 flex items-center pointer-events-none text-stone-500">
-                        <i className="fa-solid fa-search text-[9px]"></i>
-                    </div>
-                    <input
-                        type="text"
-                        value={searchTerm}
-                        onChange={(e) => setSearchTerm(e.target.value)}
-                        placeholder="Buscar animal..."
-                        className="block w-full pl-7 pr-2 py-1.5 text-[11px] bg-stone-800 border border-stone-700 rounded focus:ring-2 focus:ring-green-500 focus:border-transparent text-white placeholder-stone-500"
-                    />
-                </div>
-
-                {/* Filters and View Toggle Side by Side */}
-                <div className="flex gap-2">
-                    {/* Filters - takes more space */}
-                    <div className="flex-1 bg-stone-800/50 p-2 rounded border border-stone-700/50">
-                        <div className="flex items-center gap-1.5 mb-1.5 text-[9px] text-stone-500 font-medium uppercase tracking-wider">
-                            <i className="fa-solid fa-filter text-[8px]"></i> Filtros
+                {/* Search, Filters and View Toggle in One Row */}
+                <div className="flex items-center gap-2">
+                    {/* Search - Expanded (Takes available space) */}
+                    <div className="relative flex-1">
+                        <div className="absolute inset-y-0 left-0 pl-2 flex items-center pointer-events-none text-stone-500">
+                            <i className="fa-solid fa-search text-[9px]"></i>
                         </div>
-                        <div className="flex flex-wrap gap-1.5">
+                        <input
+                            type="text"
+                            value={searchTerm}
+                            onChange={(e) => setSearchTerm(e.target.value)}
+                            placeholder="Buscar..."
+                            className="block w-full pl-6 pr-2 py-1 text-[10px] bg-stone-800 border border-stone-700 rounded focus:ring-1 focus:ring-green-500 focus:border-transparent text-white placeholder-stone-500"
+                        />
+                    </div>
+
+                    {/* Filters - Inline (Compact) */}
+                    <div className="flex items-center gap-2 bg-stone-800/50 px-2 py-1 rounded border border-stone-700/50 overflow-x-auto no-scrollbar shrink-0">
+                        <div className="text-[9px] text-stone-500 font-medium uppercase tracking-wider whitespace-nowrap">
+                            <i className="fa-solid fa-filter text-[8px] mr-1"></i>Filtros
+                        </div>
+                        <div className="h-3 w-px bg-stone-700/50 mx-1"></div>
+                        <div className="flex items-center gap-1">
                             {['Bebendo', 'Comendo', 'Descansando', 'Coletando'].map((type) => {
                                 const isSelected = highlightedType === type;
                                 const isDimmed = highlightedType && !isSelected;
+
+                                const icons: Record<string, string> = {
+                                    'Bebendo': 'cotw_drinking.webp',
+                                    'Comendo': 'cotw_feeding.webp',
+                                    'Descansando': 'cotw_resting.webp',
+                                    'Coletando': 'cotw_gathering.webp'
+                                };
+
                                 return (
                                     <button
                                         key={type}
                                         onClick={() => toggleHighlight(type)}
-                                        className={`flex items-center gap-1 px-2 py-1 text-[10px] rounded border transition-all ${isSelected ? 'bg-stone-700 border-stone-500' : 'bg-transparent border-transparent hover:bg-stone-700/50'} ${isDimmed ? 'opacity-30 grayscale' : ''}`}
+                                        title={type}
+                                        className={`flex items-center justify-center p-0.5 rounded border transition-all ${isSelected ? 'bg-stone-700 border-stone-500' : 'bg-transparent border-transparent hover:bg-stone-700/50'} ${isDimmed ? 'opacity-30 grayscale' : ''}`}
                                     >
-                                        <span className={`w-1.5 h-1.5 rounded-full ${isSelected ? 'scale-125' : ''}`} style={{ backgroundColor: ZONE_COLORS[type] }} />
-                                        <span className={isSelected ? 'text-white font-semibold' : 'text-stone-300'}>{ZONE_LABELS[type]}</span>
+                                        <img
+                                            src={`/${icons[type]}`}
+                                            alt={type}
+                                            className={`w-5 h-5 object-contain ${isSelected ? 'scale-110 drop-shadow-[0_0_5px_rgba(255,255,255,0.3)]' : 'opacity-70'}`}
+                                        />
                                     </button>
                                 );
                             })}
                         </div>
                     </div>
 
-                    {/* View Toggle */}
-                    <div className="flex bg-stone-800 p-0.5 rounded border border-stone-700 self-start">
+                    {/* View Toggle - Fixed Width (w-40) with Text */}
+                    <div className="flex w-40 justify-end bg-stone-800 p-0.5 rounded border border-stone-700 shrink-0">
                         <button
                             onClick={() => handleViewModeChange('timeline')}
-                            className={`flex items-center gap-1 px-2 py-1 rounded text-[10px] font-medium transition-all ${viewMode === 'timeline' ? 'bg-stone-700 text-white' : 'text-stone-400 hover:text-white'}`}
+                            className={`flex-1 flex items-center justify-center h-6 rounded transition-all ${viewMode === 'timeline' ? 'bg-stone-700 text-white' : 'text-stone-400 hover:text-white'}`}
+                            title="Timeline"
                         >
-                            <i className="fa-solid fa-chart-bar text-[9px]"></i> Timeline
+                            <i className="fa-solid fa-chart-bar text-[9px] mr-1"></i>
+                            <span className="text-[9px]">Timeline</span>
                         </button>
                         <button
                             onClick={() => handleViewModeChange('clock')}
-                            className={`flex items-center gap-1 px-2 py-1 rounded text-[10px] font-medium transition-all ${viewMode === 'clock' ? 'bg-stone-700 text-white' : 'text-stone-400 hover:text-white'}`}
+                            className={`flex-1 flex items-center justify-center h-6 rounded transition-all ${viewMode === 'clock' ? 'bg-stone-700 text-white' : 'text-stone-400 hover:text-white'}`}
+                            title="Relógio"
                         >
-                            <i className="fa-solid fa-clock text-[9px]"></i> Relógio
+                            <i className="fa-solid fa-clock text-[9px] mr-1"></i>
+                            <span className="text-[9px]">Relógio</span>
                         </button>
                     </div>
                 </div>

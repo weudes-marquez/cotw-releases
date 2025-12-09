@@ -133,13 +133,7 @@ export function HamburgerMenu({ show, onClose, fontSize, onFontSizeChange, onRes
                         Sobre
                     </button>
 
-                    <button
-                        onClick={() => { onShowMigration(); onClose(); }}
-                        className="w-full text-left px-3 py-2 bg-yellow-900/30 hover:bg-yellow-800/50 text-yellow-300 hover:text-yellow-200 rounded-sm text-sm flex items-center gap-2"
-                    >
-                        <i className="fa-solid fa-database"></i>
-                        Migrar need_zones
-                    </button>
+
                 </div>
             </div>
         </>

@@ -1,0 +1,289 @@
+import React, { useState } from 'react';
+import { UserStatistics, AnimalStatistics } from '../types';
+import { ArrowLeft, Trophy, Target, Crosshair, Crown, Gem, Sparkles, Activity, History, Calculator, Search, Frown } from
+'lucide-react';
+
+interface StatisticsViewProps {
+stats: UserStatistics;
+onBack: () => void;
+}
+
+const StatisticsView: React.FC<StatisticsViewProps> = ({ stats, onBack }) => {
+    const [searchTerm, setSearchTerm] = useState('');
+
+    // Helper to calculate ratios safe from division by zero
+    const calculateRatio = (total: number, divisor: number) => {
+    if (divisor === 0) return 0;
+    return Math.round(total / divisor);
+    };
+
+    const killsPerDiamond = calculateRatio(stats.totalHarvests, stats.totalDiamonds);
+    const killsPerRare = calculateRatio(stats.totalHarvests, stats.totalRares);
+    const killsPerSuperRare = calculateRatio(stats.totalHarvests, stats.totalSuperRares);
+    const killsPerGreatOne = calculateRatio(stats.totalHarvests, stats.totalGreatOnes);
+
+    // Filter animals based on search
+    const filteredAnimals = stats.animalStats.filter(animal =>
+    animal.animalId.toLowerCase().includes(searchTerm.toLowerCase())
+    );
+
+    return (
+    <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500 pb-12">
+
+        {/* Header */}
+        <div className="flex items-center gap-4 border-b border-gray-800 pb-6">
+            <button onClick={onBack}
+                className="p-2 rounded-lg bg-gray-800 text-gray-400 hover:text-white hover:bg-gray-700 transition-colors">
+                <ArrowLeft size={20} />
+            </button>
+            <div>
+                <h2 className="text-2xl font-bold text-white flex items-center gap-2">
+                    <Trophy className="text-yellow-500" /> Estatísticas de Caça
+                </h2>
+                <p className="text-gray-400 text-sm">Visão geral do seu progresso e conquistas</p>
+            </div>
+        </div>
+
+        {/* Great One Hero Card */}
+        <div
+            className="relative overflow-hidden bg-gradient-to-r from-amber-900/40 to-yellow-900/10 border border-amber-700/30 rounded-2xl p-6 md:p-8 flex items-center justify-between shadow-2xl">
+            <div
+                className="absolute top-0 right-0 p-32 bg-amber-500/10 blur-3xl rounded-full -mr-16 -mt-16 pointer-events-none">
+            </div>
+
+            <div className="z-10">
+                <div
+                    className="flex items-center gap-2 text-amber-400 font-semibold mb-2 uppercase tracking-wider text-xs">
+                    <Crown size={14} /> O Grande Troféu
+                </div>
+                <div className="text-5xl md:text-6xl font-black text-white drop-shadow-lg">
+                    {stats.totalGreatOnes}
+                </div>
+                <div className="text-gray-300 font-medium mt-1">Animais Great One</div>
+            </div>
+
+            <div className="z-10 bg-amber-500/20 p-4 rounded-full border border-amber-500/40">
+                <Crown size={48} className="text-amber-400" />
+            </div>
+        </div>
+
+        {/* Main Grid */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+
+            {/* Total Harvests */}
+            <StatCard icon={<Crosshair size={20} className="text-green-400" />}
+            label="Total de Abates"
+            value={stats.totalHarvests}
+            subLabel="Animais caçados"
+            colorClass="bg-green-500/10 border-green-500/20"
+            />
+
+            {/* Diamonds */}
+            <StatCard icon={<Gem size={20} className="text-cyan-400" />}
+            label="Diamantes"
+            value={stats.totalDiamonds}
+            subLabel="Rank máximo"
+            colorClass="bg-cyan-500/10 border-cyan-500/20"
+            />
+
+            {/* Rares */}
+            <StatCard icon={<Sparkles size={20} className="text-purple-400" />}
+            label="Pelagem Rara"
+            value={stats.totalRares}
+            subLabel="Variações incomuns"
+            colorClass="bg-purple-500/10 border-purple-500/20"
+            />
+
+            {/* Super Rares */}
+            <StatCard icon={<Sparkles size={20} className="text-pink-400" />}
+            label="Super Raros"
+            value={stats.totalSuperRares}
+            subLabel="Extremamente raros"
+            colorClass="bg-pink-500/10 border-pink-500/20"
+            />
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+
+            {/* Averages / Performance Section */}
+            <div className="md:col-span-2 bg-gray-800/40 backdrop-blur-sm border border-gray-700 rounded-xl p-6">
+                <div className="flex items-center gap-2 mb-6">
+                    <Calculator className="text-gray-400" size={20} />
+                    <h3 className="text-lg font-bold text-white">Médias Gerais (RNG)</h3>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <AverageItem label="Média p/ Diamante" value={killsPerDiamond} suffix="abates"
+                        color="text-cyan-400" />
+                    <AverageItem label="Média p/ Great One" value={killsPerGreatOne} suffix="abates"
+                        color="text-amber-400" />
+                    <AverageItem label="Média p/ Raro" value={killsPerRare} suffix="abates" color="text-purple-400" />
+                    <AverageItem label="Média p/ Super Raro" value={killsPerSuperRare} suffix="abates"
+                        color="text-pink-400" />
+                </div>
+            </div>
+
+            {/* Session & General Info */}
+            <div className="space-y-4">
+                <div className="bg-gray-800/40 border border-gray-700 rounded-xl p-5 flex items-center justify-between">
+                    <div>
+                        <div className="text-gray-400 text-xs font-medium uppercase mb-1">Espécies Caçadas</div>
+                        <div className="text-2xl font-bold text-white">{stats.totalSpecies}</div>
+                    </div>
+                    <div className="bg-gray-700 p-3 rounded-lg">
+                        <Target className="text-gray-300" size={24} />
+                    </div>
+                </div>
+
+                <div className="bg-gray-800/40 border border-gray-700 rounded-xl p-5 flex items-center justify-between">
+                    <div>
+                        <div className="text-gray-400 text-xs font-medium uppercase mb-1">Sessões Ativas</div>
+                        <div className="text-2xl font-bold text-green-400">{stats.activeSessions}</div>
+                    </div>
+                    <div className="bg-gray-700 p-3 rounded-lg">
+                        <Activity className="text-green-400" size={24} />
+                    </div>
+                </div>
+
+                <div className="bg-gray-800/40 border border-gray-700 rounded-xl p-5 flex items-center justify-between">
+                    <div>
+                        <div className="text-gray-400 text-xs font-medium uppercase mb-1">Sessões Finalizadas</div>
+                        <div className="text-2xl font-bold text-blue-400">{stats.finishedSessions}</div>
+                    </div>
+                    <div className="bg-gray-700 p-3 rounded-lg">
+                        <History className="text-blue-400" size={24} />
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        {/* Per Animal Breakdown */}
+        <div className="mt-8">
+            <div className="flex flex-col md:flex-row justify-between items-center mb-6 gap-4">
+                <h3 className="text-xl font-bold text-white flex items-center gap-2">
+                    <Target className="text-green-500" /> Estatísticas por Espécie
+                </h3>
+
+                <div className="relative w-full md:w-64">
+                    <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                        <Search className="h-4 w-4 text-gray-500" />
+                    </div>
+                    <input type="text" placeholder="Buscar animal..." value={searchTerm} onChange={(e)=>
+                    setSearchTerm(e.target.value)}
+                    className="block w-full pl-10 pr-4 py-2 bg-gray-800 border border-gray-700 rounded-lg focus:ring-1
+                    focus:ring-green-500 focus:border-transparent text-white text-sm"
+                    />
+                </div>
+            </div>
+
+            <div className="bg-gray-800/40 border border-gray-700 rounded-xl overflow-hidden shadow-xl">
+                <div className="overflow-x-auto">
+                    <table className="w-full text-left border-collapse">
+                        <thead>
+                            <tr
+                                className="bg-gray-800/80 text-gray-400 text-xs uppercase tracking-wider border-b border-gray-700">
+                                <th className="p-4 font-semibold">Animal</th>
+                                <th className="p-4 font-semibold text-center">Abates</th>
+                                <th className="p-4 font-semibold text-center text-cyan-400">Diamantes</th>
+                                <th className="p-4 font-semibold text-center text-amber-400">Great Ones</th>
+                                <th className="p-4 font-semibold text-center text-red-400">Trolls</th>
+                                <th className="p-4 font-semibold text-center text-purple-400">Raros / Super</th>
+                            </tr>
+                        </thead>
+                        <tbody className="divide-y divide-gray-700/50 text-sm">
+                            {filteredAnimals.length > 0 ? filteredAnimals.map((animal) => {
+                            const avgDiamond = calculateRatio(animal.totalHarvests, animal.diamonds);
+                            const avgGO = calculateRatio(animal.totalHarvests, animal.greatOnes);
+
+                            return (
+                            <tr key={animal.animalId} className="hover:bg-gray-700/30 transition-colors group">
+                                <td className="p-4 font-medium text-white">{animal.animalId}</td>
+                                <td className="p-4 text-center text-gray-300 font-mono">
+                                    {animal.totalHarvests.toLocaleString()}</td>
+
+                                {/* Diamonds Column */}
+                                <td className="p-4 text-center">
+                                    <div className="flex flex-col items-center">
+                                        <span className={`font-bold ${animal.diamonds> 0 ? 'text-cyan-400' :
+                                            'text-gray-600'}`}>{animal.diamonds}</span>
+                                        {animal.diamonds > 0 && <span
+                                            className="text-[10px] text-gray-500">1:{avgDiamond}</span>}
+                                    </div>
+                                </td>
+
+                                {/* Great Ones Column */}
+                                <td className="p-4 text-center">
+                                    <div className="flex flex-col items-center">
+                                        <span className={`font-bold ${animal.greatOnes> 0 ? 'text-amber-400' :
+                                            'text-gray-600'}`}>{animal.greatOnes}</span>
+                                        {animal.greatOnes > 0 && <span
+                                            className="text-[10px] text-gray-500">1:{avgGO}</span>}
+                                    </div>
+                                </td>
+
+                                {/* Trolls Column */}
+                                <td className="p-4 text-center">
+                                    <div className="flex flex-col items-center">
+                                        <div className="flex items-center gap-1 justify-center">
+                                            {animal.trolls > 0 &&
+                                            <Frown size={12} className="text-red-500/70" />}
+                                            <span className={`font-bold ${animal.trolls> 0 ? 'text-red-400' :
+                                                'text-gray-600'}`}>{animal.trolls}</span>
+                                        </div>
+                                    </div>
+                                </td>
+
+                                {/* Rares Column */}
+                                <td className="p-4 text-center">
+                                    <div className="flex flex-col items-center gap-1">
+                                        <div className="flex gap-2 text-xs">
+                                            <span
+                                                className="bg-purple-500/10 text-purple-400 px-1.5 py-0.5 rounded border border-purple-500/20"
+                                                title="Raros">R: {animal.rares}</span>
+                                            <span
+                                                className="bg-pink-500/10 text-pink-400 px-1.5 py-0.5 rounded border border-pink-500/20"
+                                                title="Super Raros">SR: {animal.superRares}</span>
+                                        </div>
+                                    </div>
+                                </td>
+                            </tr>
+                            );
+                            }) : (
+                            <tr>
+                                <td colSpan={6} className="p-8 text-center text-gray-500">
+                                    Nenhum animal encontrado.
+                                </td>
+                            </tr>
+                            )}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+    );
+    };
+
+    // Sub-components for cleaner code
+    const StatCard = ({ icon, label, value, subLabel, colorClass }: any) => (
+    <div className={`rounded-xl p-5 border backdrop-blur-sm ${colorClass}`}>
+        <div className="flex justify-between items-start mb-2">
+            <div className="p-2 bg-gray-900/30 rounded-lg">{icon}</div>
+        </div>
+        <div className="text-3xl font-bold text-white mb-1">{value.toLocaleString()}</div>
+        <div className="font-medium text-gray-200 text-sm">{label}</div>
+        <div className="text-xs text-gray-400 mt-1">{subLabel}</div>
+    </div>
+    );
+
+    const AverageItem = ({ label, value, suffix, color }: any) => (
+    <div className="bg-gray-900/50 rounded-lg p-4 border border-gray-800 flex justify-between items-center">
+        <span className="text-gray-400 text-sm font-medium">{label}</span>
+        <div className="text-right">
+            <span className={`text-xl font-bold ${color}`}>{value > 0 ? value : '-'}</span>
+            <span className="text-xs text-gray-500 ml-1">{suffix}</span>
+        </div>
+    </div>
+    );
+
+    export default StatisticsView;

@@ -50,7 +50,7 @@ export const Dashboard = () => {
     const [showMenu, setShowMenu] = useState(false);
     const [showAbout, setShowAbout] = useState(false);
     const [showNeedZonesPanel, setShowNeedZonesPanel] = useState(false);
-    const [showMigration, setShowMigration] = useState(false);
+    // const [showMigration, setShowMigration] = useState(false); // REMOVED
 
 
     // Confirmation Modal State
@@ -69,7 +69,8 @@ export const Dashboard = () => {
     });
     const [fontSize, setFontSize] = useState(1.0);
     const [grindActive, setGrindActive] = useState(false);
-    const [animalTotalKills, setAnimalTotalKills] = useState(0); // Total kills for the animal (Grind Total)
+    const [animalTotalKills, setAnimalTotalKills] = useState(0); // Total kills for the CURRENT GRIND (Active Session)
+    const [sessionKillsMap, setSessionKillsMap] = useState<Record<string, number>>({}); // Map of local session kills per animal ID
     const [_selectedFurType, _setSelectedFurType] = useState<FurType | null>(null);
     const [startDate] = useState(new Date().toLocaleDateString('pt-BR'));
     const [isRetracted, setIsRetracted] = useState(false);
@@ -259,22 +260,18 @@ export const Dashboard = () => {
         if (animal) {
             setSelectedAnimal(animal);
             setGrindActive(false);
+            // Do NOT reset local session when switching animal - it persists in sessionKillsMap
         }
     };
 
-    // Fetch total kills for selected animal
+    // Sync animalTotalKills with active session (NOT lifetime stats)
     useEffect(() => {
-        if (user && selectedAnimal) {
-            getUserHistoricalStats(user.uid).then(stats => {
-                const animalStat = stats.find(s => s.animal_id === String(selectedAnimal.id));
-                if (animalStat) {
-                    setAnimalTotalKills(animalStat.total_kills);
-                } else {
-                    setAnimalTotalKills(0);
-                }
-            }).catch(console.error);
+        if (session) {
+            setAnimalTotalKills(session.total_kills);
+        } else {
+            setAnimalTotalKills(0);
         }
-    }, [user, selectedAnimal]);
+    }, [session]);
 
     // Track user activity on mount
     useEffect(() => {
@@ -291,30 +288,53 @@ export const Dashboard = () => {
 
         if (change > 0) {
             console.log('⚡ Calling addKill()');
+            if (selectedAnimal) {
+                setSessionKillsMap(prev => ({
+                    ...prev,
+                    [selectedAnimal.id]: (prev[selectedAnimal.id] || 0) + 1
+                }));
+            }
             addKill();
         } else {
-
             if (session) {
                 console.log('⚡ Calling removeLastKill()');
+                if (selectedAnimal) {
+                    setSessionKillsMap(prev => ({
+                        ...prev,
+                        [selectedAnimal.id]: Math.max(0, (prev[selectedAnimal.id] || 0) - 1)
+                    }));
+                }
                 removeLastKill();
             } else {
                 console.warn('⚠️ Cannot decrement: no active session');
             }
         }
-    }, [addKill, removeLastKill, session]);
+    }, [addKill, removeLastKill, session, selectedAnimal]);
 
     const resetCurrentSession = async () => {
-        // Encerra a sessão atual no banco
-        await finishCurrentSession();
-        // Inicia uma nova sessão imediatamente para o mesmo animal
-        await reloadSession();
+        // Zera apenas o contador local da sessão para este animal
+        if (selectedAnimal) {
+            setSessionKillsMap(prev => ({
+                ...prev,
+                [selectedAnimal.id]: 0
+            }));
+        }
     };
 
     const resetGrind = async () => {
-        // Encerra TUDO - Apenas finaliza a sessão e sai do modo grind, mantendo histórico
+        // Encerra TUDO - Finaliza a sessão no banco
         await finishCurrentSession();
         setGrindActive(false);
         setAnimalTotalKills(0);
+
+        // Reset local session for this animal too
+        if (selectedAnimal) {
+            setSessionKillsMap(prev => ({
+                ...prev,
+                [selectedAnimal.id]: 0
+            }));
+        }
+
         // Force refresh of active sessions
         if (user) {
             getActiveSessions(user.uid).then(setActiveSessions);
@@ -777,8 +797,8 @@ export const Dashboard = () => {
                                             <div className="text-center">
                                                 <div className="flex items-end justify-center gap-1">
                                                     {/* Current Session Count (Small Orange) */}
-                                                    <span className="text-hunter-orange font-bold text-xs leading-none pb-0.5" title="Abates nesta sessão">
-                                                        {session?.total_kills || 0}
+                                                    <span className="text-hunter-orange font-bold text-xs leading-none pb-0.5" title="Abates nesta sessão (Local)">
+                                                        {selectedAnimal ? (sessionKillsMap[selectedAnimal.id] || 0) : 0}
                                                     </span>
 
                                                     {/* Total Grind Count (Large White) */}
@@ -892,7 +912,11 @@ export const Dashboard = () => {
                                                             });
                                                         }}
                                                         title="Encerrar apenas a sessão atual"
-                                                        className="py-1 px-2 text-[9px] font-bold border border-yellow-600 bg-yellow-900/20 text-yellow-400 hover:bg-yellow-600 hover:text-white  rounded-sm flex items-center justify-center gap-1 active:scale-95"
+                                                        disabled={!selectedAnimal || (sessionKillsMap[selectedAnimal.id] || 0) === 0}
+                                                        className={`w-full py-2 px-3 text-xs font-bold border rounded-sm flex items-center justify-center gap-2 transition-colors ${(!selectedAnimal || (sessionKillsMap[selectedAnimal.id] || 0) === 0)
+                                                            ? 'border-stone-700 text-stone-600 cursor-not-allowed bg-stone-800/30'
+                                                            : 'border-stone-600 bg-stone-800 hover:bg-stone-700 text-stone-300 hover:text-white'
+                                                            } `}
                                                     >
                                                         <i className="fa-solid fa-rotate-left"></i>
                                                         <span className="uppercase tracking-wide">Sessão</span>
@@ -1445,7 +1469,7 @@ export const Dashboard = () => {
                         setShowMenu(false);
                         window.ipcRenderer.send('open-user-guide');
                     }}
-                    onShowMigration={() => setShowMigration(true)}
+                    onShowMigration={() => { }} // Disabled/Removed
                 />
 
                 {/* Confirmation Modal */}
@@ -1467,7 +1491,7 @@ export const Dashboard = () => {
                     <div className={`flex-1 transition-all duration-300 ${showNeedZonesPanel ? 'mr-[600px]' : ''}`}>
                         {/* Modals */}
                         <NeedZonesModal show={showNeedZones} onClose={() => setShowNeedZones(false)} />
-                        <MigrationModal show={showMigration} onClose={() => setShowMigration(false)} />
+                        {/* <MigrationModal show={showMigration} onClose={() => setShowMigration(false)} /> */}
                         <AboutModal
                             show={showAbout}
                             onClose={() => setShowAbout(false)}

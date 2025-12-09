@@ -128,7 +128,7 @@ export function ZoneClock({ zones, size = 300, highlightedType }: ZoneClockProps
     };
 
     return (
-        <div className="flex justify-center items-center pb-4">
+        <div className="flex justify-center items-center">
             <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`}>
                 <circle cx={center} cy={center} r={radius} fill="#1f2937" stroke="#374151" strokeWidth="1" />
                 <circle cx={center} cy={center} r={innerRadius} fill="#111827" stroke="#374151" strokeWidth="1" />
