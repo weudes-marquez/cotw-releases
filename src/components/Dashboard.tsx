@@ -38,6 +38,23 @@ export const Dashboard = () => {
     const [showNeedZones, setShowNeedZones] = useState(false);
     const [furTypes, setFurTypes] = useState<FurType[]>([]);
     const [showFurTypes, setShowFurTypes] = useState(false);
+
+    // Advanced Stats State
+    const [showDetailedMode, setShowDetailedMode] = useState(false);
+    const [showKillDetailsModal, setShowKillDetailsModal] = useState(false);
+    const [pendingKillData, setPendingKillData] = useState<{
+        isDiamond: boolean;
+        isGreatOne: boolean;
+        isTroll: boolean;
+        furTypeId?: string;
+        furTypeName?: string;
+    } | null>(null);
+    const [killDetails, setKillDetails] = useState<{
+        weight: string;
+        trophyScore: string;
+        difficultyLevel: string;
+    }>({ weight: '', trophyScore: '', difficultyLevel: '' });
+
     const [isAnimalDropdownOpen, setIsAnimalDropdownOpen] = useState(false);
     const [furTypeSearch, setFurTypeSearch] = useState('');
     const [selectedAnimalForStats, setSelectedAnimalForStats] = useState<string | null>(null);
@@ -46,6 +63,7 @@ export const Dashboard = () => {
     const [showGrandTotal, setShowGrandTotal] = useState(false);
     const [showCurrentSession, setShowCurrentSession] = useState(false);
     const [activeSessions, setActiveSessions] = useState<any[]>([]);
+    const [isCooldown, setIsCooldown] = useState(false);
 
     const [showMenu, setShowMenu] = useState(false);
     const [showAbout, setShowAbout] = useState(false);
@@ -126,8 +144,17 @@ export const Dashboard = () => {
     );
 
     // Wrapper para addKill
-    const addKill = useCallback(async (isDiamond = false, isGreatOne = false, furTypeId?: string, furTypeName?: string) => {
-        console.log('🔵 addKill CALLED', { isDiamond, isGreatOne, furTypeId });
+    const addKill = useCallback(async (
+        isDiamond = false,
+        isGreatOne = false,
+        furTypeId?: string,
+        furTypeName?: string,
+        isTroll = false,
+        weight: number | null = null,
+        trophyScore: number | null = null,
+        difficultyLevel: number | null = null
+    ) => {
+        console.log('🔵 addKill CALLED', { isDiamond, isGreatOne, furTypeId, isTroll });
 
         // Trigger celebration if Great One
         if (isGreatOne) {
@@ -140,13 +167,37 @@ export const Dashboard = () => {
             return prev + 1;
         });
 
-        await addKillBase(isDiamond, isGreatOne, furTypeId, furTypeName);
+        await addKillBase(isDiamond, isGreatOne, furTypeId, furTypeName, isTroll, weight, trophyScore, difficultyLevel);
 
         // Refresh historical stats if panel is open to show new kill immediately
         if (showStats && user) {
             getUserHistoricalStats(user.uid).then(setHistoricalStats).catch(console.error);
         }
     }, [addKillBase, showStats, user]);
+
+    // Handler for kill clicks (checks detailed mode)
+    const handleKillClick = async (
+        type: 'normal' | 'diamond' | 'greatOne' | 'troll' | 'rare',
+        furTypeId?: string,
+        furTypeName?: string
+    ) => {
+        const killData = {
+            isDiamond: type === 'diamond',
+            isGreatOne: type === 'greatOne',
+            isTroll: type === 'troll',
+            furTypeId,
+            furTypeName
+        };
+
+        if (showDetailedMode) {
+            setPendingKillData(killData);
+            setKillDetails({ weight: '', trophyScore: '', difficultyLevel: '' }); // Reset form
+            setShowKillDetailsModal(true);
+        } else {
+            // Fast mode - register immediately
+            await addKill(killData.isDiamond, killData.isGreatOne, killData.furTypeId, killData.furTypeName, killData.isTroll);
+        }
+    };
 
     // Wrapper para removeLastKill
     const removeLastKill = useCallback(async () => {
@@ -258,20 +309,28 @@ export const Dashboard = () => {
         const animalId = e.target.value;
         const animal = animals.find((a) => String(a.id) === String(animalId));
         if (animal) {
+            console.log('🐾 handleAnimalSelect: Switching to', animal.name_ptbr, '- Setting grindActive=FALSE');
             setSelectedAnimal(animal);
             setGrindActive(false);
+            setAnimalTotalKills(0); // Reset visual counter immediately
             // Do NOT reset local session when switching animal - it persists in sessionKillsMap
         }
     };
 
-    // Sync animalTotalKills with active session (NOT lifetime stats)
+    // Sync animalTotalKills (Y) from database session
+    // IMPORTANT: Do NOT auto-activate grind or overwrite sessionKillsMap (X)
     useEffect(() => {
-        if (session) {
+        // Only sync Y when grind is already active by user action
+        if (grindActive && session) {
             setAnimalTotalKills(session.total_kills);
-        } else {
+        }
+        // Reset Y to 0 only when there's no session AND grind is not active
+        if (!session && !grindActive) {
             setAnimalTotalKills(0);
         }
-    }, [session]);
+        // Never set grindActive here - only user clicks should do that
+        // Never set sessionKillsMap here - X is managed separately
+    }, [session, grindActive]);
 
     // Track user activity on mount
     useEffect(() => {
@@ -282,58 +341,65 @@ export const Dashboard = () => {
         }
     }, [user]);
 
+    // Refresh active sessions and historical stats when session updates (with debounce)
+    useEffect(() => {
+        if (!user) return;
+
+        const timer = setTimeout(() => {
+            getActiveSessions(user.uid).then(setActiveSessions);
+            getUserHistoricalStats(user.uid).then(setHistoricalStats);
+        }, 2000);
+
+        return () => clearTimeout(timer);
+    }, [user, session?.total_kills]);
+
 
     const updateCounter = useCallback((change: number) => {
+        if (isCooldown) {
+            console.log('⏳ Cooldown active, ignoring click');
+            return;
+        }
+
+        setIsCooldown(true);
+        setTimeout(() => setIsCooldown(false), 300); // 300ms delay
+
         console.log('⚡ updateCounter CALLED with change:', change);
 
         if (change > 0) {
-            console.log('⚡ Calling addKill()');
-            if (selectedAnimal) {
-                setSessionKillsMap(prev => ({
-                    ...prev,
-                    [selectedAnimal.id]: (prev[selectedAnimal.id] || 0) + 1
-                }));
-            }
-            addKill();
+            // Adicionar abate - database handles both counters
+            handleKillClick('normal');
         } else {
+            // Remover abate
             if (session) {
-                console.log('⚡ Calling removeLastKill()');
-                if (selectedAnimal) {
-                    setSessionKillsMap(prev => ({
-                        ...prev,
-                        [selectedAnimal.id]: Math.max(0, (prev[selectedAnimal.id] || 0) - 1)
-                    }));
-                }
                 removeLastKill();
             } else {
                 console.warn('⚠️ Cannot decrement: no active session');
             }
         }
-    }, [addKill, removeLastKill, session, selectedAnimal]);
+    }, [session, removeLastKill, isCooldown]);
 
     const resetCurrentSession = async () => {
-        // Zera apenas o contador local da sessão para este animal
-        if (selectedAnimal) {
-            setSessionKillsMap(prev => ({
-                ...prev,
-                [selectedAnimal.id]: 0
-            }));
+        // Zera o contador de sessão (X) no banco de dados
+        if (session) {
+            try {
+                const { supabase } = await import('../supabase_integration');
+                await supabase
+                    .from('grind_sessions')
+                    .update({ current_session_kills: 0 })
+                    .eq('id', session.id);
+            } catch (error) {
+                console.error('❌ Erro ao zerar current_session_kills:', error);
+            }
         }
+        // Esconde o contador, mostra botão "Iniciar Grind"
+        // O grind no banco de dados permanece ativo (is_active = true)
+        setGrindActive(false);
     };
 
     const resetGrind = async () => {
-        // Encerra TUDO - Finaliza a sessão no banco
+        // Encerra TUDO - Finaliza a sessão no banco (is_active = false)
         await finishCurrentSession();
         setGrindActive(false);
-        setAnimalTotalKills(0);
-
-        // Reset local session for this animal too
-        if (selectedAnimal) {
-            setSessionKillsMap(prev => ({
-                ...prev,
-                [selectedAnimal.id]: 0
-            }));
-        }
 
         // Force refresh of active sessions
         if (user) {
@@ -366,12 +432,24 @@ export const Dashboard = () => {
         // Limpa o flag
         (window as any).__isDiamondRare = false;
 
-        // Se é diamante raro, registra como diamante + raro
-        if (isDiamondRare) {
-            await addKill(true, false, furType.id, furType.name);
+        if (showDetailedMode) {
+            setPendingKillData({
+                isDiamond: isDiamondRare,
+                isGreatOne: false,
+                isTroll: false,
+                furTypeId: furType.id,
+                furTypeName: furType.name
+            });
+            setKillDetails({ weight: '', trophyScore: '', difficultyLevel: '' });
+            setShowKillDetailsModal(true);
         } else {
-            // Pelagem rara normal (sem diamante)
-            await addKill(false, false, furType.id, furType.name);
+            // Se é diamante raro, registra como diamante + raro
+            if (isDiamondRare) {
+                await addKill(true, false, furType.id, furType.name);
+            } else {
+                // Pelagem rara normal (sem diamante)
+                await addKill(false, false, furType.id, furType.name);
+            }
         }
 
         setShowFurTypes(false);
@@ -719,44 +797,24 @@ export const Dashboard = () => {
                                     <div className="flex flex-col items-center justify-center py-8">
                                         <button
                                             onClick={() => {
-                                                // Pegar o primeiro animal dos resultados filtrados ou o selecionado
-                                                const filteredAnimals = animals.filter(animal => {
-                                                    if (animalSearch === '') return true;
-                                                    const normalizedSearch = normalizeText(animalSearch);
-                                                    return normalizeText(animal.name_ptbr).includes(normalizedSearch) ||
-                                                        normalizeText(animal.name_enus).includes(normalizedSearch);
-                                                });
-
-                                                const animalToUse = selectedAnimal || (filteredAnimals.length > 0 ? filteredAnimals[0] : null);
-
-                                                if (animalToUse) {
-                                                    setSelectedAnimal(animalToUse);
+                                                // ONLY start grind if user has explicitly selected an animal
+                                                if (selectedAnimal) {
                                                     setGrindActive(true);
+                                                    // Sync Y from session if exists, otherwise 0
+                                                    if (session) {
+                                                        setAnimalTotalKills(session.total_kills);
+                                                    } else {
+                                                        setAnimalTotalKills(0);
+                                                    }
+                                                    // Do NOT reset X - it persists per animal unless End Session was clicked
                                                 }
                                             }}
-                                            disabled={(() => {
-                                                // Habilita se: tem animal selecionado OU tem resultados da busca
-                                                const filteredAnimals = animals.filter(animal => {
-                                                    if (animalSearch === '') return true;
-                                                    const normalizedSearch = normalizeText(animalSearch);
-                                                    return normalizeText(animal.name_ptbr).includes(normalizedSearch) ||
-                                                        normalizeText(animal.name_enus).includes(normalizedSearch);
-                                                });
-                                                return !selectedAnimal && filteredAnimals.length === 0;
-                                            })()}
-                                            title="Iniciar sessão de grind"
-                                            className={`w-full py-3 px-4 text-sm font-bold border transition-colors rounded-sm flex items-center justify-center gap-2 active:scale-[0.98] ${(() => {
-                                                const filteredAnimals = animals.filter(animal => {
-                                                    if (animalSearch === '') return true;
-                                                    const normalizedSearch = normalizeText(animalSearch);
-                                                    return normalizeText(animal.name_ptbr).includes(normalizedSearch) ||
-                                                        normalizeText(animal.name_enus).includes(normalizedSearch);
-                                                });
-                                                return (selectedAnimal || filteredAnimals.length > 0)
-                                                    ? 'border-hunter-orange bg-gradient-to-r from-hunter-orange/90 to-orange-600/80 text-white hover:shadow-[0_0_20px_rgba(217,93,30,0.4)]'
-                                                    : 'border-stone-700 bg-stone-800/50 text-stone-600 cursor-not-allowed';
-                                            })()
-                                                } `}
+                                            disabled={!selectedAnimal}
+                                            title={selectedAnimal ? "Iniciar sessão de grind" : "Selecione um animal primeiro"}
+                                            className={`w-full py-3 px-4 text-sm font-bold border transition-colors rounded-sm flex items-center justify-center gap-2 active:scale-[0.98] ${selectedAnimal
+                                                ? 'border-hunter-orange bg-gradient-to-r from-hunter-orange/90 to-orange-600/80 text-white hover:shadow-[0_0_20px_rgba(217,93,30,0.4)]'
+                                                : 'border-stone-700 bg-stone-800/50 text-stone-600 cursor-not-allowed'
+                                                }`}
                                         >
                                             <i className="fa-solid fa-play"></i>
                                             <span className="uppercase tracking-wide">Iniciar Grind</span>
@@ -796,17 +854,17 @@ export const Dashboard = () => {
 
                                             <div className="text-center">
                                                 <div className="flex items-end justify-center gap-1">
-                                                    {/* Current Session Count (Small Orange) */}
-                                                    <span className="text-hunter-orange font-bold text-xs leading-none pb-0.5" title="Abates nesta sessão (Local)">
-                                                        {selectedAnimal ? (sessionKillsMap[selectedAnimal.id] || 0) : 0}
+                                                    {/* Current Session Count (Small Orange) - Now from database */}
+                                                    <span className="text-hunter-orange font-bold text-xs leading-none pb-0.5" title="Abates nesta sessão">
+                                                        {session?.current_session_kills || 0}
                                                     </span>
 
-                                                    {/* Total Grind Count (Large White) */}
+                                                    {/* Total Grind Count (Large White) - From database */}
                                                     <span
                                                         className="text-4xl font-sans font-bold text-white drop-shadow-[0_0_10px_rgba(255,255,255,0.2)] leading-none"
                                                         title="Total de abates (Grind)"
                                                     >
-                                                        {animalTotalKills}
+                                                        {session?.total_kills || 0}
                                                     </span>
                                                 </div>
                                                 <span className="text-[10px] uppercase tracking-[0.3em] text-stone-500">Abates</span>
@@ -823,19 +881,26 @@ export const Dashboard = () => {
 
                                         {/* Extra Toggles & GREAT ONE */}
                                         <div className="space-y-2 relative z-10">
-                                            {/* Row 1: Standard Rares */}
+                                            {/* Row 1: Diamond + Troll */}
                                             <div className="grid grid-cols-2 gap-2">
                                                 <button
-                                                    onClick={() => {
-                                                        if (confirm('Confirmar registro de DIAMANTE?')) {
-                                                            addKill(true);
-                                                        }
-                                                    }}
+                                                    onClick={() => handleKillClick('diamond')}
                                                     title="Registrar diamante (diamante comum)"
                                                     className="py-1.5 px-2 text-[9px] font-bold border border-blue-600/50 bg-gradient-to-r from-blue-900/20 via-blue-800/10 to-blue-900/20 text-blue-300 hover:bg-blue-500 hover:text-white hover:border-blue-400 hover:shadow-[0_0_15px_rgba(59,130,246,0.4)] transition-colors rounded-sm flex items-center justify-center gap-1 active:scale-[0.98]"
                                                 >
                                                     <i className="fa-regular fa-gem text-sm"></i> DIAMANTE
                                                 </button>
+                                                <button
+                                                    onClick={() => handleKillClick('troll')}
+                                                    title="Registrar Troll (nível máximo mas sem diamante)"
+                                                    className="py-1.5 px-2 text-[9px] font-bold border border-orange-600/50 bg-gradient-to-r from-orange-900/20 via-orange-800/10 to-orange-900/20 text-orange-400 hover:bg-orange-600 hover:text-white hover:border-orange-400 hover:shadow-[0_0_15px_rgba(249,115,22,0.4)] transition-colors rounded-sm flex items-center justify-center gap-1 active:scale-[0.98]"
+                                                >
+                                                    <i className="fa-solid fa-face-frown-open text-sm"></i> TROLL
+                                                </button>
+                                            </div>
+
+                                            {/* Row 2: Rare + Diamond Rare */}
+                                            <div className="grid grid-cols-2 gap-2">
                                                 <button
                                                     onClick={fetchFurTypes}
                                                     title="Registrar pelagem rara"
@@ -843,31 +908,12 @@ export const Dashboard = () => {
                                                 >
                                                     <i className="fa-solid fa-star text-sm"></i> RARO
                                                 </button>
-                                            </div>
-
-                                            {/* Row 2: GREAT ONE + DIAMOND RARE */}
-                                            <div className="grid grid-cols-2 gap-2">
-                                                <button
-                                                    onClick={() => {
-                                                        if (confirm('🏆 Confirmar captura do GREAT ONE?')) {
-                                                            addKill(false, true);
-                                                        }
-                                                    }}
-                                                    title="Registrar Great One! (o troféu máximo)"
-                                                    className="py-1.5 px-2 text-[9px] font-bold border border-yellow-600/50 bg-gradient-to-r from-yellow-900/20 via-yellow-800/10 to-yellow-900/20 text-go-gold hover:bg-gradient-to-r hover:from-yellow-600 hover:via-yellow-500 hover:to-yellow-600 hover:text-white hover:border-go-gold hover:shadow-[0_0_20px_rgba(251,191,36,0.4)] transition-colors rounded-sm flex items-center justify-center gap-1 group animate-pulse-gold active:scale-[0.98]"
-                                                >
-                                                    <i className="fa-solid fa-crown text-xs group-hover:animate-bounce"></i>
-                                                    <span className="tracking-[0.15em]">GREAT ONE</span>
-                                                </button>
-
                                                 <button
                                                     onClick={async () => {
-                                                        // Busca fur types e registra diamante raro
                                                         try {
                                                             const furTypesData = await getFurTypes();
                                                             setFurTypes(furTypesData);
                                                             setShowFurTypes(true);
-                                                            // Marca que é pra registrar como diamante raro
                                                             (window as any).__isDiamondRare = true;
                                                         } catch (error) {
                                                             console.error('Erro ao buscar fur types:', error);
@@ -878,9 +924,19 @@ export const Dashboard = () => {
                                                 >
                                                     <i className="fa-regular fa-gem text-sm"></i>
                                                     <i className="fa-solid fa-star text-xs"></i>
-                                                    <span className="tracking-[0.15em]">DIAMANTE RARO</span>
+                                                    <span className="tracking-tighter">DIAMANTE RARO</span>
                                                 </button>
                                             </div>
+
+                                            {/* Row 3: GREAT ONE (Full Width) */}
+                                            <button
+                                                onClick={() => handleKillClick('greatOne')}
+                                                title="Registrar Great One! (o troféu máximo)"
+                                                className="w-full py-2 px-2 text-[10px] font-bold border border-yellow-600/50 bg-gradient-to-r from-yellow-900/20 via-yellow-800/10 to-yellow-900/20 text-go-gold hover:bg-gradient-to-r hover:from-yellow-600 hover:via-yellow-500 hover:to-yellow-600 hover:text-white hover:border-go-gold hover:shadow-[0_0_20px_rgba(251,191,36,0.4)] transition-colors rounded-sm flex items-center justify-center gap-2 group animate-pulse-gold active:scale-[0.98]"
+                                            >
+                                                <i className="fa-solid fa-crown text-sm group-hover:animate-bounce"></i>
+                                                <span className="tracking-[0.2em] text-sm">GREAT ONE</span>
+                                            </button>
 
 
                                             {/* Session Date with Two Buttons */}
@@ -912,10 +968,10 @@ export const Dashboard = () => {
                                                             });
                                                         }}
                                                         title="Encerrar apenas a sessão atual"
-                                                        disabled={!selectedAnimal || (sessionKillsMap[selectedAnimal.id] || 0) === 0}
-                                                        className={`w-full py-2 px-3 text-xs font-bold border rounded-sm flex items-center justify-center gap-2 transition-colors ${(!selectedAnimal || (sessionKillsMap[selectedAnimal.id] || 0) === 0)
+                                                        disabled={!session || (session.current_session_kills || 0) === 0}
+                                                        className={`w-full py-2 px-3 text-xs font-bold border rounded-sm flex items-center justify-center gap-2 transition-colors ${(!session || (session.current_session_kills || 0) === 0)
                                                             ? 'border-stone-700 text-stone-600 cursor-not-allowed bg-stone-800/30'
-                                                            : 'border-stone-600 bg-stone-800 hover:bg-stone-700 text-stone-300 hover:text-white'
+                                                            : 'border-yellow-600/50 text-yellow-500 hover:bg-yellow-900/20 hover:text-yellow-400'
                                                             } `}
                                                     >
                                                         <i className="fa-solid fa-rotate-left"></i>
@@ -1024,12 +1080,12 @@ export const Dashboard = () => {
                                                 <div className="px-3 pb-3">
                                                     <div className="grid grid-cols-2 gap-2 text-xs">
                                                         {(() => {
-                                                            const totalKills = historicalStats.reduce((sum, animal) => sum + animal.total_kills, 0);
-                                                            const totalDiamonds = historicalStats.reduce((sum, animal) => sum + animal.total_diamonds, 0);
-                                                            const totalGreatOnes = historicalStats.reduce((sum, animal) => sum + animal.total_great_ones, 0);
-                                                            const totalRares = historicalStats.reduce((sum, animal) => sum + animal.total_rares, 0);
-                                                            const totalSuperRares = historicalStats.reduce((sum, animal) => sum + animal.super_rares, 0);
-                                                            const speciesCount = historicalStats.filter(animal => animal.total_kills > 0).length;
+                                                            const totalKills = historicalStats.reduce((sum, animal) => sum + (animal.total_kills || 0), 0);
+                                                            const totalDiamonds = historicalStats.reduce((sum, animal) => sum + (animal.total_diamonds || 0), 0);
+                                                            const totalGreatOnes = historicalStats.reduce((sum, animal) => sum + (animal.total_great_ones || 0), 0);
+                                                            const totalRares = historicalStats.reduce((sum, animal) => sum + (animal.total_rares || 0), 0);
+                                                            const totalSuperRares = historicalStats.reduce((sum, animal) => sum + (animal.super_rares || 0), 0);
+                                                            const speciesCount = historicalStats.filter(animal => (animal.total_kills || 0) > 0).length;
 
                                                             const avgDiamonds = totalDiamonds > 0 ? (totalKills / totalDiamonds).toFixed(1) : '0';
                                                             const avgGreatOnes = totalGreatOnes > 0 ? (totalKills / totalGreatOnes).toFixed(1) : '0';
@@ -1298,6 +1354,25 @@ export const Dashboard = () => {
                                                                         </div>
                                                                     )}
 
+                                                                    {/* Super Rare List */}
+                                                                    {animalStat.super_rare_list && animalStat.super_rare_list.length > 0 && (
+                                                                        <div className="bg-stone-950/50 p-1.5 rounded mt-2 border border-pink-500/20">
+                                                                            <span className="text-pink-400 block text-[8px] mb-1 font-bold uppercase tracking-wider">
+                                                                                <i className="fa-solid fa-medal mr-1"></i> Super Raros
+                                                                            </span>
+                                                                            <div className="space-y-1">
+                                                                                {animalStat.super_rare_list.map((sr: any, idx: number) => (
+                                                                                    <div key={idx} className="flex justify-between items-center text-[9px] border-b border-white/5 last:border-0 pb-0.5 last:pb-0">
+                                                                                        <span className="text-stone-300">{sr.fur_type || 'Desconhecido'}</span>
+                                                                                        <span className="text-stone-500 font-mono text-[8px]">
+                                                                                            {new Date(sr.date).toLocaleDateString('pt-BR')}
+                                                                                        </span>
+                                                                                    </div>
+                                                                                ))}
+                                                                            </div>
+                                                                        </div>
+                                                                    )}
+
                                                                     <div className="grid grid-cols-2 gap-2 text-[10px] mt-2">
                                                                         <div className="bg-stone-950/50 p-1.5 rounded">
                                                                             <span className="text-stone-500 block text-[8px]">Última Sessão</span>
@@ -1470,6 +1545,8 @@ export const Dashboard = () => {
                         window.ipcRenderer.send('open-user-guide');
                     }}
                     onShowMigration={() => { }} // Disabled/Removed
+                    showDetailedMode={showDetailedMode}
+                    onToggleDetailedMode={setShowDetailedMode}
                 />
 
                 {/* Confirmation Modal */}
@@ -1496,6 +1573,111 @@ export const Dashboard = () => {
                             show={showAbout}
                             onClose={() => setShowAbout(false)}
                         />
+
+                        {/* Kill Details Modal */}
+                        {showKillDetailsModal && pendingKillData && (
+                            <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+                                <div className="bg-stone-900 border border-stone-700 rounded-lg shadow-2xl w-full max-w-sm overflow-hidden animate-in fade-in zoom-in duration-200">
+                                    <div className="p-4 border-b border-stone-800 flex justify-between items-center bg-stone-950/50">
+                                        <h3 className="text-sm font-bold text-white flex items-center gap-2">
+                                            <i className="fa-solid fa-clipboard-list text-green-500"></i>
+                                            Detalhes do Abate
+                                        </h3>
+                                        <button
+                                            onClick={() => setShowKillDetailsModal(false)}
+                                            className="text-stone-500 hover:text-white transition-colors"
+                                        >
+                                            <i className="fa-solid fa-times"></i>
+                                        </button>
+                                    </div>
+
+                                    <div className="p-4 space-y-4">
+                                        {/* Info do Tipo */}
+                                        <div className="flex gap-2 flex-wrap">
+                                            {pendingKillData.isDiamond && <span className="px-2 py-1 bg-cyan-900/30 text-cyan-400 text-[10px] rounded border border-cyan-800">DIAMANTE</span>}
+                                            {pendingKillData.isGreatOne && <span className="px-2 py-1 bg-yellow-900/30 text-yellow-400 text-[10px] rounded border border-yellow-800">GREAT ONE</span>}
+                                            {pendingKillData.isTroll && <span className="px-2 py-1 bg-orange-900/30 text-orange-400 text-[10px] rounded border border-orange-800">TROLL</span>}
+                                            {pendingKillData.furTypeName && <span className="px-2 py-1 bg-pink-900/30 text-pink-400 text-[10px] rounded border border-pink-800">{pendingKillData.furTypeName}</span>}
+                                            {!pendingKillData.isDiamond && !pendingKillData.isGreatOne && !pendingKillData.isTroll && !pendingKillData.furTypeName && <span className="px-2 py-1 bg-stone-800 text-stone-400 text-[10px] rounded border border-stone-700">ABATE NORMAL</span>}
+                                        </div>
+
+                                        {/* Peso */}
+                                        <div>
+                                            <label className="block text-[10px] uppercase text-stone-500 font-bold mb-1">Peso (kg)</label>
+                                            <input
+                                                type="number"
+                                                step="0.01"
+                                                value={killDetails.weight}
+                                                onChange={(e) => setKillDetails(prev => ({ ...prev, weight: e.target.value }))}
+                                                className="w-full bg-stone-950 border border-stone-800 rounded px-3 py-2 text-sm text-white focus:border-green-600 focus:outline-none transition-colors"
+                                                placeholder="Ex: 120.5"
+                                            />
+                                        </div>
+
+                                        {/* Score */}
+                                        <div>
+                                            <label className="block text-[10px] uppercase text-stone-500 font-bold mb-1">Score do Troféu</label>
+                                            <input
+                                                type="number"
+                                                step="0.1"
+                                                value={killDetails.trophyScore}
+                                                onChange={(e) => setKillDetails(prev => ({ ...prev, trophyScore: e.target.value }))}
+                                                className="w-full bg-stone-950 border border-stone-800 rounded px-3 py-2 text-sm text-white focus:border-green-600 focus:outline-none transition-colors"
+                                                placeholder="Ex: 250.0"
+                                            />
+                                        </div>
+
+                                        {/* Dificuldade */}
+                                        <div>
+                                            <label className="block text-[10px] uppercase text-stone-500 font-bold mb-1">Dificuldade (1-10)</label>
+                                            <div className="flex gap-1 overflow-x-auto pb-1 no-scrollbar">
+                                                {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map(level => (
+                                                    <button
+                                                        key={level}
+                                                        onClick={() => setKillDetails(prev => ({ ...prev, difficultyLevel: String(level) }))}
+                                                        className={`
+                                                w-8 h-8 shrink-0 rounded flex items-center justify-center text-xs font-bold border transition-all
+                                                ${killDetails.difficultyLevel === String(level)
+                                                                ? 'bg-green-600 border-green-500 text-white shadow-[0_0_10px_rgba(22,163,74,0.4)]'
+                                                                : 'bg-stone-800 border-stone-700 text-stone-400 hover:bg-stone-700 hover:text-white'}
+                                            `}
+                                                    >
+                                                        {level}
+                                                    </button>
+                                                ))}
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    <div className="p-4 border-t border-stone-800 bg-stone-950/30 flex gap-2">
+                                        <button
+                                            onClick={() => setShowKillDetailsModal(false)}
+                                            className="flex-1 py-2 text-xs font-bold text-stone-400 hover:text-white transition-colors"
+                                        >
+                                            CANCELAR
+                                        </button>
+                                        <button
+                                            onClick={async () => {
+                                                await addKill(
+                                                    pendingKillData.isDiamond,
+                                                    pendingKillData.isGreatOne,
+                                                    pendingKillData.furTypeId,
+                                                    pendingKillData.furTypeName,
+                                                    pendingKillData.isTroll,
+                                                    killDetails.weight ? parseFloat(killDetails.weight) : null,
+                                                    killDetails.trophyScore ? parseFloat(killDetails.trophyScore) : null,
+                                                    killDetails.difficultyLevel ? parseInt(killDetails.difficultyLevel) : null
+                                                );
+                                                setShowKillDetailsModal(false);
+                                            }}
+                                            className="flex-1 py-2 bg-green-700 hover:bg-green-600 text-white text-xs font-bold rounded shadow-[0_0_15px_rgba(21,128,61,0.4)] transition-all"
+                                        >
+                                            CONFIRMAR
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+                        )}
 
                         <style>{`
                     .glass-panel {
@@ -1571,3 +1753,4 @@ export const Dashboard = () => {
         </div>
     );
 }
+
