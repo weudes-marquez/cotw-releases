@@ -32,4 +32,9 @@ export default defineConfig({
   ],
   // Expose environment variables to the renderer process
   envPrefix: ['VITE_'],
+  test: {
+    environment: 'jsdom',
+    globals: true,
+    setupFiles: './src/test/setup.ts',
+  },
 })

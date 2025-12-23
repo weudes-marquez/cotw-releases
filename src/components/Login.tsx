@@ -11,6 +11,7 @@ export const Login = () => {
     const [showPassword, setShowPassword] = useState(false);
     const [error, setError] = useState('');
     const [loading, setLoading] = useState(false);
+    const [videoError, setVideoError] = useState(false);
     const navigate = useNavigate();
 
     const getErrorMessage = (error: any): string => {
@@ -120,10 +121,25 @@ export const Login = () => {
             {/* Background Layers */}
             <div className="absolute inset-0 w-full h-full overflow-hidden z-0 pointer-events-none">
                 {/* Image Background */}
-                <div
-                    className="absolute inset-0 bg-cover bg-center bg-no-repeat opacity-100"
-                    style={{ backgroundImage: "url('cotw-nature-05.webp')" }}
-                ></div>
+                {/* Background Media */}
+                {!videoError ? (
+                    <video
+                        autoPlay
+                        loop
+                        muted
+                        playsInline
+                        className="absolute inset-0 w-full h-full object-cover"
+                        poster="cotw-nature-05.webp"
+                        onError={() => setVideoError(true)}
+                    >
+                        <source src="splash-screen.mp4" type="video/mp4" />
+                    </video>
+                ) : (
+                    <div
+                        className="absolute inset-0 bg-cover bg-center bg-no-repeat opacity-100"
+                        style={{ backgroundImage: "url('cotw-nature-05.webp')" }}
+                    ></div>
+                )}
                 {/* Gradient Overlay - Reduced opacity for better visibility */}
                 <div className="absolute inset-0 bg-gradient-to-br from-stone-900/70 via-stone-950/60 to-black/80"></div>
             </div>

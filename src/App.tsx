@@ -24,21 +24,23 @@ function App() {
 
   if (loading) {
 
+    const isOverlay = window.location.hash.includes('overlay');
+
     return (
       <div style={{
         width: '100%',
         height: '100vh',
-        backgroundColor: '#111827',
+        backgroundColor: isOverlay ? 'transparent' : '#111827',
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
-        color: 'white',
+        color: isOverlay ? 'transparent' : 'white',
         fontSize: '24px',
         margin: 0,
         padding: 0,
         overflow: 'hidden'
       }}>
-        Loading authentication...
+        {!isOverlay && 'Loading authentication...'}
       </div>
     );
   }

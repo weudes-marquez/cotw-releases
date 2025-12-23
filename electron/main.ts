@@ -1,5 +1,7 @@
 import { app, BrowserWindow, ipcMain, globalShortcut, screen } from 'electron'
 import path from 'path'
+import { autoUpdater } from 'electron-updater'
+import log from 'electron-log'
 
 import { fileURLToPath } from 'node:url'
 
@@ -94,48 +96,82 @@ function createWindow() {
     }
 }
 
+// Helper to create Overlay Window
+function createOverlayWindow() {
+    if (overlayWin) return
+
+    const primaryDisplay = screen.getPrimaryDisplay()
+    const { width, height } = primaryDisplay.bounds
+
+    overlayWin = new BrowserWindow({
+        width: width,
+        height: height,
+        x: 0,
+        y: 0,
+        frame: false,
+        transparent: true,
+        alwaysOnTop: true,
+        resizable: false,
+        hasShadow: false,
+        webPreferences: {
+            preload: path.join(__dirname, 'preload.mjs'),
+            nodeIntegration: false,
+            contextIsolation: true,
+        },
+    })
+
+    // Load the overlay route
+    const url = VITE_DEV_SERVER_URL
+        ? `${VITE_DEV_SERVER_URL}#/overlay`
+        : path.join(process.env.DIST, 'index.html') + '#/overlay'
+
+    if (VITE_DEV_SERVER_URL) {
+        overlayWin.loadURL(url)
+    } else {
+        overlayWin.loadFile(path.join(process.env.DIST, 'index.html'), { hash: 'overlay' })
+    }
+
+    overlayWin.on('closed', () => {
+        overlayWin = null
+    })
+}
+
+// Helper to close Overlay and auxiliary windows
+function closeOverlay() {
+    if (overlayWin) {
+        overlayWin.close()
+        overlayWin = null
+    }
+    // Fecha também a janela de Need Zones se estiver aberta
+    if (needZonesWin) {
+        needZonesWin.close()
+        needZonesWin = null
+    }
+
+    // Garante que a janela principal apareça se necessário (opcional, mas bom pra UX)
+    win?.show()
+}
+
 // IPC for Overlay
-ipcMain.handle('toggle-overlay', (_event, show: boolean) => {
-    if (show) {
+ipcMain.handle('toggle-overlay', (_event, show?: boolean) => {
+    // Se 'show' for undefined, inverte o estado atual
+    const shouldShow = show !== undefined ? show : !overlayWin
+
+    if (shouldShow) {
         if (!overlayWin) {
-            overlayWin = new BrowserWindow({
-                width: 300,
-                height: 200,
-                frame: false,
-                transparent: true,
-                alwaysOnTop: true,
-                resizable: true,
-                webPreferences: {
-                    preload: path.join(__dirname, 'preload.mjs'),
-                    nodeIntegration: false,
-                    contextIsolation: true,
-                },
-            })
-
-            // Load the overlay route
-            const url = VITE_DEV_SERVER_URL
-                ? `${VITE_DEV_SERVER_URL}#/overlay`
-                : path.join(process.env.DIST, 'index.html') + '#/overlay' // Hash routing for overlay
-
-            if (VITE_DEV_SERVER_URL) {
-                overlayWin.loadURL(url)
-            } else {
-                overlayWin.loadFile(path.join(process.env.DIST, 'index.html'), { hash: 'overlay' })
-            }
-
-            overlayWin.on('closed', () => {
-                overlayWin = null
-            })
+            createOverlayWindow()
         } else {
             overlayWin.show()
         }
-        // Minimize main window?
-        // win?.minimize()
     } else {
-        overlayWin?.close()
-        overlayWin = null
-        win?.show()
+        closeOverlay()
     }
+})
+
+// IPC to control mouse pass-through for Overlay
+ipcMain.on('set-ignore-mouse-events', (event, ignore, options) => {
+    const win = BrowserWindow.fromWebContents(event.sender)
+    win?.setIgnoreMouseEvents(ignore, { forward: true })
 })
 
 // IPC for resizing window (e.g., for Login screen)
@@ -334,20 +370,20 @@ app.whenReady().then(() => {
     // Registrar atalhos globais (funcionam mesmo quando o app não está em foco)
     // ATENÇÃO: Esses atalhos funcionam GLOBALMENTE no sistema!
 
-    // Ctrl+Shift+= para incrementar (+1)
-    globalShortcut.register('CommandOrControl+Shift+=', () => {
+    // Alt+Shift+= para incrementar (+1)
+    globalShortcut.register('Alt+Shift+=', () => {
         console.log('Global hotkey: +1 kill')
         win?.webContents.send('hotkey-increment')
     })
 
-    // Ctrl+Shift+- para decrementar (-1)
-    globalShortcut.register('CommandOrControl+Shift+-', () => {
+    // Alt+Shift+- para decrementar (-1)
+    globalShortcut.register('Alt+Shift+-', () => {
         console.log('Global hotkey: -1 kill')
         win?.webContents.send('hotkey-decrement')
     })
 
-    // Ctrl+Shift+S para abrir estatísticas
-    globalShortcut.register('CommandOrControl+Shift+S', () => {
+    // Alt+Shift+S para abrir estatísticas
+    globalShortcut.register('Alt+Shift+S', () => {
         console.log('Global hotkey: Open stats')
         win?.webContents.send('hotkey-stats')
     })
@@ -361,9 +397,57 @@ app.whenReady().then(() => {
             if (isRetracted) expandWindow()
         }
     })
+
+    // Alt+Shift+H para Toggle HUD (Overlay)
+    globalShortcut.register('Alt+Shift+H', () => {
+        console.log('Global hotkey: Toggle HUD')
+        // Lógica de toggle direto aqui
+        if (overlayWin) {
+            closeOverlay()
+        } else {
+            createOverlayWindow()
+        }
+    })
+
+    // Check for updates
+    if (app.isPackaged) {
+        autoUpdater.checkForUpdatesAndNotify()
+    }
 })
 
 // Cleanup: Desregistrar atalhos quando o app fecha
 app.on('will-quit', () => {
     globalShortcut.unregisterAll()
+})
+
+// Auto-updater logging
+autoUpdater.logger = log
+// @ts-ignore
+autoUpdater.logger.transports.file.level = 'info'
+
+autoUpdater.on('checking-for-update', () => {
+    log.info('Checking for update...')
+})
+
+autoUpdater.on('update-available', (info) => {
+    log.info('Update available.', info)
+})
+
+autoUpdater.on('update-not-available', (info) => {
+    log.info('Update not available.', info)
+})
+
+autoUpdater.on('error', (err) => {
+    log.error('Error in auto-updater. ' + err)
+})
+
+autoUpdater.on('download-progress', (progressObj) => {
+    let log_message = "Download speed: " + progressObj.bytesPerSecond
+    log_message = log_message + ' - Downloaded ' + progressObj.percent + '%'
+    log_message = log_message + ' (' + progressObj.transferred + "/" + progressObj.total + ')'
+    log.info(log_message)
+})
+
+autoUpdater.on('update-downloaded', (info) => {
+    log.info('Update downloaded', info)
 })

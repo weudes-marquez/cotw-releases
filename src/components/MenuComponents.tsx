@@ -66,9 +66,11 @@ interface HamburgerMenuProps {
     onShowAbout: () => void;
     onShowGuide: () => void;
     onShowMigration: () => void;
+    showDetailedMode: boolean;
+    onToggleDetailedMode: (enabled: boolean) => void;
 }
 
-export function HamburgerMenu({ show, onClose, fontSize, onFontSizeChange, onResetStats, onShowAbout, onShowGuide, onShowMigration }: HamburgerMenuProps) {
+export function HamburgerMenu({ show, onClose, fontSize, onFontSizeChange, onResetStats, onShowAbout, onShowGuide, onShowMigration, showDetailedMode, onToggleDetailedMode }: HamburgerMenuProps) {
     if (!show) return null;
 
     return (
@@ -109,6 +111,27 @@ export function HamburgerMenu({ show, onClose, fontSize, onFontSizeChange, onRes
 
                 {/* Actions */}
                 <div className="space-y-2">
+                    <div className="border-t border-stone-800 pt-4 mt-2">
+                        <label className="flex items-center justify-between cursor-pointer group">
+                            <span className="text-stone-300 text-sm flex items-center gap-2 group-hover:text-white">
+                                <i className="fa-solid fa-list-check text-hunter-orange"></i>
+                                Modo Detalhado
+                            </span>
+                            <div className="relative">
+                                <input
+                                    type="checkbox"
+                                    className="sr-only peer"
+                                    checked={showDetailedMode}
+                                    onChange={(e) => onToggleDetailedMode(e.target.checked)}
+                                />
+                                <div className="w-9 h-5 bg-stone-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-hunter-orange"></div>
+                            </div>
+                        </label>
+                        <p className="text-[10px] text-stone-500 mt-1 ml-6">
+                            Ao ativar, abre um formulário para inserir peso, score e dificuldade ao registrar abates especiais.
+                        </p>
+                    </div>
+
                     <button
                         onClick={onShowGuide}
                         className="w-full text-left px-3 py-2 bg-stone-800 hover:bg-stone-700 text-stone-300 hover:text-white rounded-sm  text-sm flex items-center gap-2"

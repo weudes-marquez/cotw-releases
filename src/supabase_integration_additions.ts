@@ -1,4 +1,4 @@
-import { supabase, getSupabaseUserId } from './supabase_integration';
+import { supabase, getSupabaseUserId } from './supabase_client';
 
 /**
  * Buscar estatísticas globais do usuário (todas as sessões combinadas)

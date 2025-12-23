@@ -4,13 +4,14 @@ import { auth } from '../firebase'; // Keep auth for now if still using Firebase
 import { signOut } from 'firebase/auth';
 import { useNavigate } from 'react-router-dom';
 import { useGrindSession, getSpecies, getFurTypes, authenticateWithFirebase, upsertUserProfile, getUserHistoricalStats, deleteAllUserStats, getActiveSessions, trackUserActivity } from '../supabase_integration';
+import { syncManager } from '../sync_manager';
 import { HamburgerMenu, AboutModal, useFontSizeControl, ConfirmationModal } from './MenuComponents';
 import { NeedZonesModal } from './NeedZonesModal';
 import { NeedZonesPanel } from './NeedZonesPanel';
 import { MigrationModal } from './MigrationModal';
 
 interface Animal {
-    id: number;
+    id: string; // UUID from Supabase
     name_enus: string;
     name_ptbr: string;
 }
@@ -87,7 +88,7 @@ export const Dashboard = () => {
     });
     const [fontSize, setFontSize] = useState(1.0);
     const [grindActive, setGrindActive] = useState(false);
-    const [animalTotalKills, setAnimalTotalKills] = useState(0); // Total kills for the CURRENT GRIND (Active Session)
+    const [animalSessionIds, setAnimalSessionIds] = useState<Record<string, string>>({}); // Map of animalId -> sessionId
     const [sessionKillsMap, setSessionKillsMap] = useState<Record<string, number>>({}); // Map of local session kills per animal ID
     const [_selectedFurType, _setSelectedFurType] = useState<FurType | null>(null);
     const [startDate] = useState(new Date().toLocaleDateString('pt-BR'));
@@ -108,6 +109,9 @@ export const Dashboard = () => {
         const unsubscribe = auth.onAuthStateChanged(async (u) => {
             setUser(u);
             if (u) {
+                // Inicializa o SyncManager
+                syncManager.setUserId(u.uid);
+                syncManager.startAutoSync(10000); // Sincroniza a cada 10 segundos (Batching)
                 try {
                     // 1. Tentar autenticação segura no Supabase PRIMEIRO
                     // Isso garante que temos um auth.uid() válido para o RLS
@@ -136,12 +140,39 @@ export const Dashboard = () => {
     }, []);
 
     // Hook de persistência (só cria sessão quando grindActive=true)
-    const { session, stats, loading: sessionLoading, addKill: addKillBase, removeLastKill: removeLastKillBase, finishCurrentSession, reload: reloadSession } = useGrindSession(
+    const {
+        session,
+        stats,
+        globalTotal,
+        loading: sessionLoading,
+        isSyncing,
+        addKill: addKillBase,
+        removeLastKill: removeLastKillBase,
+        finishCurrentSession,
+        reload: reloadSession
+    } = useGrindSession(
         user?.uid,
         selectedAnimal ? String(selectedAnimal.id) : '',
         selectedAnimal?.name_ptbr || '',
-        grindActive  // Só cria sessão quando grind está ativo
+        grindActive,  // Só cria sessão quando grind está ativo
+        selectedAnimal ? animalSessionIds[String(selectedAnimal.id)] : null // Passa o ID vinculado se existir
     );
+
+    // Sincroniza o ID da sessão quando ela é carregada/criada
+    useEffect(() => {
+        if (session?.id && selectedAnimal) {
+            const animalId = String(selectedAnimal.id);
+            // SEGURANÇA: Só vincula se a sessão realmente pertencer a este animal
+            if (session.animal_id === animalId) {
+                if (animalSessionIds[animalId] !== session.id) {
+                    setAnimalSessionIds(prev => ({
+                        ...prev,
+                        [animalId]: session.id
+                    }));
+                }
+            }
+        }
+    }, [session?.id, session?.animal_id, selectedAnimal]);
 
     // Wrapper para addKill
     const addKill = useCallback(async (
@@ -161,12 +192,6 @@ export const Dashboard = () => {
             triggerGreatOneCelebration();
         }
 
-        // Optimistic update for total kills
-        setAnimalTotalKills(prev => {
-            console.log('🔵 setAnimalTotalKills:', prev, '->', prev + 1);
-            return prev + 1;
-        });
-
         await addKillBase(isDiamond, isGreatOne, furTypeId, furTypeName, isTroll, weight, trophyScore, difficultyLevel);
 
         // Refresh historical stats if panel is open to show new kill immediately
@@ -176,7 +201,7 @@ export const Dashboard = () => {
     }, [addKillBase, showStats, user]);
 
     // Handler for kill clicks (checks detailed mode)
-    const handleKillClick = async (
+    const handleKillClick = useCallback(async (
         type: 'normal' | 'diamond' | 'greatOne' | 'troll' | 'rare',
         furTypeId?: string,
         furTypeName?: string
@@ -197,17 +222,11 @@ export const Dashboard = () => {
             // Fast mode - register immediately
             await addKill(killData.isDiamond, killData.isGreatOne, killData.furTypeId, killData.furTypeName, killData.isTroll);
         }
-    };
+    }, [showDetailedMode, addKill]);
 
     // Wrapper para removeLastKill
     const removeLastKill = useCallback(async () => {
         console.log('🔴 removeLastKill CALLED');
-
-        // Optimistic update for total kills
-        setAnimalTotalKills(prev => {
-            console.log('🔴 setAnimalTotalKills:', prev, '->', Math.max(0, prev - 1));
-            return Math.max(0, prev - 1);
-        });
 
         await removeLastKillBase();
     }, [removeLastKillBase]);
@@ -305,32 +324,25 @@ export const Dashboard = () => {
         fetchAnimals();
     }, []);
 
-    const handleAnimalSelect = (e: React.ChangeEvent<HTMLSelectElement>) => {
-        const animalId = e.target.value;
-        const animal = animals.find((a) => String(a.id) === String(animalId));
-        if (animal) {
-            console.log('🐾 handleAnimalSelect: Switching to', animal.name_ptbr, '- Setting grindActive=FALSE');
-            setSelectedAnimal(animal);
-            setGrindActive(false);
-            setAnimalTotalKills(0); // Reset visual counter immediately
-            // Do NOT reset local session when switching animal - it persists in sessionKillsMap
-        }
-    };
+    const handleAnimalSelect = useCallback((animal: Animal) => {
+        console.log('🐾 handleAnimalSelect: Selecting', animal);
 
-    // Sync animalTotalKills (Y) from database session
-    // IMPORTANT: Do NOT auto-activate grind or overwrite sessionKillsMap (X)
-    useEffect(() => {
-        // Only sync Y when grind is already active by user action
-        if (grindActive && session) {
-            setAnimalTotalKills(session.total_kills);
+        // Se já existe um grind aberto na tela, pede confirmação para sair da visualização
+        if (selectedAnimal && grindActive) {
+            if (!window.confirm('Você está saindo da visualização do grind atual. O progresso continuará salvo no banco, mas você voltará para a tela inicial deste animal. Continuar?')) {
+                return;
+            }
         }
-        // Reset Y to 0 only when there's no session AND grind is not active
-        if (!session && !grindActive) {
-            setAnimalTotalKills(0);
+
+        if (!animal || !animal.id) {
+            console.error('❌ Erro: Tentativa de selecionar animal sem ID:', animal);
+            return;
         }
-        // Never set grindActive here - only user clicks should do that
-        // Never set sessionKillsMap here - X is managed separately
-    }, [session, grindActive]);
+
+        setSelectedAnimal(animal);
+        setGrindActive(false); // SEMPRE volta para o botão "Iniciar Grind"
+        setShowMenu(false);    // Fecha o menu ao selecionar
+    }, [selectedAnimal, grindActive]);
 
     // Track user activity on mount
     useEffect(() => {
@@ -345,12 +357,17 @@ export const Dashboard = () => {
     useEffect(() => {
         if (!user) return;
 
-        const timer = setTimeout(() => {
+        // Refresh stats immediately on mount or when session kills change
+        getActiveSessions(user.uid).then(setActiveSessions);
+        getUserHistoricalStats(user.uid).then(setHistoricalStats);
+
+        // Also set up a periodic refresh but much faster than 2s
+        const timer = setInterval(() => {
             getActiveSessions(user.uid).then(setActiveSessions);
             getUserHistoricalStats(user.uid).then(setHistoricalStats);
-        }, 2000);
+        }, 5000);
 
-        return () => clearTimeout(timer);
+        return () => clearInterval(timer);
     }, [user, session?.total_kills]);
 
 
@@ -376,36 +393,50 @@ export const Dashboard = () => {
                 console.warn('⚠️ Cannot decrement: no active session');
             }
         }
-    }, [session, removeLastKill, isCooldown]);
+    }, [session, removeLastKill, handleKillClick, isCooldown]);
 
-    const resetCurrentSession = async () => {
-        // Zera o contador de sessão (X) no banco de dados
-        if (session) {
-            try {
-                const { supabase } = await import('../supabase_integration');
-                await supabase
-                    .from('grind_sessions')
-                    .update({ current_session_kills: 0 })
-                    .eq('id', session.id);
-            } catch (error) {
-                console.error('❌ Erro ao zerar current_session_kills:', error);
+    const resetCurrentSession = useCallback(async () => {
+        if (!session) return;
+
+        if (!window.confirm('Deseja realmente ENCERRAR A SESSÃO? O contador Laranja (X) voltará a zero, mas o Total do Grind (Y) será mantido.')) {
+            return;
+        }
+
+        try {
+            await finishCurrentSession(false);
+            setGrindActive(false); // Volta para a tela de "Iniciar Grind"
+        } catch (error) {
+            console.error('Error resetting session:', error);
+            alert('Erro ao encerrar sessão no banco.');
+        }
+    }, [session, finishCurrentSession]);
+
+    const resetGrind = useCallback(async () => {
+        if (!session) return;
+
+        if (!window.confirm('⚠️ ATENÇÃO: Deseja realmente FINALIZAR ESTE GRIND? Ele será marcado como concluído e sairá das sessões ativas. Para continuar, você terá que iniciar um novo Grind 0/0.')) {
+            return;
+        }
+
+        try {
+            await finishCurrentSession(true);
+
+            // Limpa o ID da sessão local para que não tente reabrir este grind finalizado
+            if (selectedAnimal) {
+                setAnimalSessionIds(prev => {
+                    const next = { ...prev };
+                    delete next[selectedAnimal.id];
+                    return next;
+                });
             }
-        }
-        // Esconde o contador, mostra botão "Iniciar Grind"
-        // O grind no banco de dados permanece ativo (is_active = true)
-        setGrindActive(false);
-    };
 
-    const resetGrind = async () => {
-        // Encerra TUDO - Finaliza a sessão no banco (is_active = false)
-        await finishCurrentSession();
-        setGrindActive(false);
-
-        // Force refresh of active sessions
-        if (user) {
-            getActiveSessions(user.uid).then(setActiveSessions);
+            setGrindActive(false);
+            setSelectedAnimal(null); // Volta para a seleção de animais
+        } catch (error) {
+            console.error('Error resetting grind:', error);
+            alert('Erro ao finalizar grind no banco.');
         }
-    };
+    }, [session, finishCurrentSession, selectedAnimal]);
 
     const fetchFurTypes = async () => {
         try {
@@ -506,6 +537,7 @@ export const Dashboard = () => {
 
     const handleResetStats = async () => {
         if (!user) return;
+        setShowMenu(false); // Close menu before showing confirm
         if (window.confirm('⚠️ ATENÇÃO: Isso vai DELETAR TODAS as suas estatísticas (sessões e abates). Tem certeza?')) {
             try {
                 await deleteAllUserStats(user.uid);
@@ -674,6 +706,15 @@ export const Dashboard = () => {
                                 <i className="fa-solid fa-clock text-xs"></i>
                             </button>
 
+                            {/* Overlay Button */}
+                            <button
+                                onClick={() => window.ipcRenderer.invoke('toggle-overlay')}
+                                title="Toggle Overlay HUD (Alt+Shift+H)"
+                                className="w-6 h-6 rounded-full bg-cyan-600/80 border border-cyan-500/50 text-white hover:bg-cyan-700 flex items-center justify-center"
+                            >
+                                <i className="fa-solid fa-layer-group text-xs"></i>
+                            </button>
+
                             {/* Botão de Toggle Bandeja */}
                             <button
                                 onClick={toggleTray}
@@ -762,11 +803,7 @@ export const Dashboard = () => {
                                                         <div
                                                             key={animal.id}
                                                             onClick={() => {
-                                                                // Simulate event for handler compatibility or call logic directly
-                                                                // Since handleAnimalSelect expects a ChangeEvent, we'll adapt or call logic directly
-                                                                // But handleAnimalSelect is complex, let's adapt:
-                                                                const syntheticEvent = { target: { value: animal.id.toString() } } as any;
-                                                                handleAnimalSelect(syntheticEvent);
+                                                                handleAnimalSelect(animal);
                                                                 setIsAnimalDropdownOpen(false);
                                                             }}
                                                             className={`px-3 py-2 text-xs cursor-pointer hover:bg-hunter-orange hover:text-white transition-colors border-b border-stone-800 last:border-0 ${selectedAnimal?.id === animal.id ? 'bg-hunter-orange/20 text-hunter-orange font-bold' : 'text-stone-300'} `}
@@ -800,11 +837,9 @@ export const Dashboard = () => {
                                                 // ONLY start grind if user has explicitly selected an animal
                                                 if (selectedAnimal) {
                                                     setGrindActive(true);
-                                                    // Sync Y from session if exists, otherwise 0
+                                                    // Sync from database session if needed
                                                     if (session) {
-                                                        setAnimalTotalKills(session.total_kills);
-                                                    } else {
-                                                        setAnimalTotalKills(0);
+                                                        // session.total_kills is already used in the UI
                                                     }
                                                     // Do NOT reset X - it persists per animal unless End Session was clicked
                                                 }
@@ -846,34 +881,54 @@ export const Dashboard = () => {
                                         <div className="flex items-center justify-between mb-3 relative z-10">
                                             <button
                                                 onClick={() => updateCounter(-1)}
+                                                disabled={sessionLoading || isCooldown || !session}
                                                 title="Decrementar contador (Ctrl+Shift+-)"
-                                                className="w-7 h-7 rounded-sm border border-stone-600 text-stone-400 hover:border-red-500 hover:text-red-500 hover:bg-red-500/10  active:scale-95 flex items-center justify-center text-xs"
+                                                className={`w-7 h-7 rounded-sm border flex items-center justify-center text-xs transition-colors ${sessionLoading || isCooldown || !session
+                                                    ? 'border-stone-700 text-stone-700 cursor-wait opacity-50'
+                                                    : 'border-stone-600 text-stone-400 hover:border-red-500 hover:text-red-500 hover:bg-red-500/10 active:scale-95'
+                                                    }`}
                                             >
                                                 <i className="fa-solid fa-minus"></i>
                                             </button>
 
-                                            <div className="text-center">
-                                                <div className="flex items-end justify-center gap-1">
-                                                    {/* Current Session Count (Small Orange) - Now from database */}
-                                                    <span className="text-hunter-orange font-bold text-xs leading-none pb-0.5" title="Abates nesta sessão">
-                                                        {session?.current_session_kills || 0}
-                                                    </span>
+                                            <div className="text-center min-w-[100px]">
+                                                {sessionLoading ? (
+                                                    <div className="flex flex-col items-center justify-center animate-pulse">
+                                                        <span className="text-hunter-orange text-xs font-bold mb-1">CARREGANDO</span>
+                                                        <div className="h-8 w-16 bg-white/10 rounded"></div>
+                                                    </div>
+                                                ) : (
+                                                    <>
+                                                        <div className="flex items-end justify-center gap-1">
+                                                            {/* Current Session Count (Small Orange) - Now from database */}
+                                                            <span className="text-hunter-orange font-bold text-xs leading-none pb-0.5 flex items-center gap-1" title="Abates nesta sessão">
+                                                                {session?.current_session_kills || 0}
+                                                                {isSyncing && (
+                                                                    <i className="fa-solid fa-sync fa-spin text-[8px] opacity-70"></i>
+                                                                )}
+                                                            </span>
 
-                                                    {/* Total Grind Count (Large White) - From database */}
-                                                    <span
-                                                        className="text-4xl font-sans font-bold text-white drop-shadow-[0_0_10px_rgba(255,255,255,0.2)] leading-none"
-                                                        title="Total de abates (Grind)"
-                                                    >
-                                                        {session?.total_kills || 0}
-                                                    </span>
-                                                </div>
-                                                <span className="text-[10px] uppercase tracking-[0.3em] text-stone-500">Abates</span>
+                                                            {/* Total Grind Count (Large White) - Use stats from hook for optimistic sync */}
+                                                            <span
+                                                                className="text-4xl font-sans font-bold text-white drop-shadow-[0_0_10px_rgba(255,255,255,0.2)] leading-none"
+                                                                title="Total Global de abates (Histórico)"
+                                                            >
+                                                                {globalTotal || 0}
+                                                            </span>
+                                                        </div>
+                                                        <span className="text-[10px] uppercase tracking-[0.3em] text-stone-500">Abates</span>
+                                                    </>
+                                                )}
                                             </div>
 
                                             <button
                                                 onClick={() => updateCounter(1)}
+                                                disabled={sessionLoading || isCooldown || !session}
                                                 title="Incrementar contador (Ctrl+Shift+=)"
-                                                className="w-7 h-7 rounded-sm border border-stone-600 text-stone-400 hover:border-hunter-orange hover:text-hunter-orange hover:bg-hunter-orange/10  active:scale-95 flex items-center justify-center text-xs"
+                                                className={`w-7 h-7 rounded-sm border flex items-center justify-center text-xs transition-colors ${sessionLoading || isCooldown || !session
+                                                    ? 'border-stone-700 text-stone-700 cursor-wait opacity-50'
+                                                    : 'border-stone-700 text-stone-400 hover:border-hunter-orange hover:text-hunter-orange active:bg-hunter-orange/10'
+                                                    }`}
                                             >
                                                 <i className="fa-solid fa-plus"></i>
                                             </button>
@@ -1528,158 +1583,156 @@ export const Dashboard = () => {
                         SERVER: HIRSCHFELDEN-01
                     </div>
                 </div>
+            </div>
 
-                {/* Hamburger Menu */}
-                <HamburgerMenu
-                    show={showMenu}
-                    onClose={() => setShowMenu(false)}
-                    fontSize={fontSize}
-                    onFontSizeChange={updateFontSize}
-                    onResetStats={handleResetStats}
-                    onShowAbout={() => {
-                        setShowMenu(false);
-                        setShowAbout(true);
-                    }}
-                    onShowGuide={() => {
-                        setShowMenu(false);
-                        window.ipcRenderer.send('open-user-guide');
-                    }}
-                    onShowMigration={() => { }} // Disabled/Removed
-                    showDetailedMode={showDetailedMode}
-                    onToggleDetailedMode={setShowDetailedMode}
-                />
+            {/* Modals & Overlays */}
+            <HamburgerMenu
+                show={showMenu}
+                onClose={() => setShowMenu(false)}
+                fontSize={fontSize}
+                onFontSizeChange={updateFontSize}
+                onResetStats={() => {
+                    handleResetStats();
+                    setShowMenu(false); // Ensure menu closes after reset
+                }}
+                onShowAbout={() => {
+                    setShowMenu(false);
+                    setShowAbout(true);
+                }}
+                onShowGuide={() => {
+                    setShowMenu(false);
+                    window.ipcRenderer.send('open-user-guide');
+                }}
+                onShowMigration={() => { }} // Disabled/Removed
+                showDetailedMode={showDetailedMode}
+                onToggleDetailedMode={setShowDetailedMode}
+            />
 
-                {/* Confirmation Modal */}
-                <ConfirmationModal
-                    show={confirmModal.show}
-                    title={confirmModal.title}
-                    message={confirmModal.message}
-                    confirmText={confirmModal.confirmText}
-                    confirmColor={confirmModal.confirmColor}
-                    onConfirm={() => {
-                        confirmModal.onConfirm();
-                        setConfirmModal(prev => ({ ...prev, show: false }));
-                    }}
-                    onCancel={() => setConfirmModal(prev => ({ ...prev, show: false }))}
-                />
+            <ConfirmationModal
+                show={confirmModal.show}
+                title={confirmModal.title}
+                message={confirmModal.message}
+                confirmText={confirmModal.confirmText}
+                confirmColor={confirmModal.confirmColor}
+                onConfirm={() => {
+                    confirmModal.onConfirm();
+                    setConfirmModal(prev => ({ ...prev, show: false }));
+                }}
+                onCancel={() => setConfirmModal(prev => ({ ...prev, show: false }))}
+            />
 
-                <div className="flex h-screen overflow-hidden relative">
-                    {/* Main Content */}
-                    <div className={`flex-1 transition-all duration-300 ${showNeedZonesPanel ? 'mr-[600px]' : ''}`}>
-                        {/* Modals */}
-                        <NeedZonesModal show={showNeedZones} onClose={() => setShowNeedZones(false)} />
-                        {/* <MigrationModal show={showMigration} onClose={() => setShowMigration(false)} /> */}
-                        <AboutModal
-                            show={showAbout}
-                            onClose={() => setShowAbout(false)}
-                        />
+            <NeedZonesModal show={showNeedZones} onClose={() => setShowNeedZones(false)} />
+            <AboutModal
+                show={showAbout}
+                onClose={() => setShowAbout(false)}
+            />
 
-                        {/* Kill Details Modal */}
-                        {showKillDetailsModal && pendingKillData && (
-                            <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-                                <div className="bg-stone-900 border border-stone-700 rounded-lg shadow-2xl w-full max-w-sm overflow-hidden animate-in fade-in zoom-in duration-200">
-                                    <div className="p-4 border-b border-stone-800 flex justify-between items-center bg-stone-950/50">
-                                        <h3 className="text-sm font-bold text-white flex items-center gap-2">
-                                            <i className="fa-solid fa-clipboard-list text-green-500"></i>
-                                            Detalhes do Abate
-                                        </h3>
+            {/* Kill Details Modal */}
+            {showKillDetailsModal && pendingKillData && (
+                <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+                    <div className="bg-stone-900 border border-stone-700 rounded-lg shadow-2xl w-full max-w-sm overflow-hidden animate-in fade-in zoom-in duration-200">
+                        <div className="p-4 border-b border-stone-800 flex justify-between items-center bg-stone-950/50">
+                            <h3 className="text-sm font-bold text-white flex items-center gap-2">
+                                <i className="fa-solid fa-clipboard-list text-green-500"></i>
+                                Detalhes do Abate
+                            </h3>
+                            <button
+                                onClick={() => setShowKillDetailsModal(false)}
+                                className="text-stone-500 hover:text-white transition-colors"
+                            >
+                                <i className="fa-solid fa-times"></i>
+                            </button>
+                        </div>
+
+                        <div className="p-4 space-y-4">
+                            {/* Info do Tipo */}
+                            <div className="flex gap-2 flex-wrap">
+                                {pendingKillData.isDiamond && <span className="px-2 py-1 bg-cyan-900/30 text-cyan-400 text-[10px] rounded border border-cyan-800">DIAMANTE</span>}
+                                {pendingKillData.isGreatOne && <span className="px-2 py-1 bg-yellow-900/30 text-yellow-400 text-[10px] rounded border border-yellow-800">GREAT ONE</span>}
+                                {pendingKillData.isTroll && <span className="px-2 py-1 bg-orange-900/30 text-orange-400 text-[10px] rounded border border-orange-800">TROLL</span>}
+                                {pendingKillData.furTypeName && <span className="px-2 py-1 bg-pink-900/30 text-pink-400 text-[10px] rounded border border-pink-800">{pendingKillData.furTypeName}</span>}
+                                {!pendingKillData.isDiamond && !pendingKillData.isGreatOne && !pendingKillData.isTroll && !pendingKillData.furTypeName && <span className="px-2 py-1 bg-stone-800 text-stone-400 text-[10px] rounded border border-stone-700">ABATE NORMAL</span>}
+                            </div>
+
+                            {/* Peso */}
+                            <div>
+                                <label className="block text-[10px] uppercase text-stone-500 font-bold mb-1">Peso (kg)</label>
+                                <input
+                                    type="number"
+                                    step="0.01"
+                                    value={killDetails.weight}
+                                    onChange={(e) => setKillDetails(prev => ({ ...prev, weight: e.target.value }))}
+                                    className="w-full bg-stone-950 border border-stone-800 rounded px-3 py-2 text-sm text-white focus:border-green-600 focus:outline-none transition-colors"
+                                    placeholder="Ex: 120.5"
+                                />
+                            </div>
+
+                            {/* Score */}
+                            <div>
+                                <label className="block text-[10px] uppercase text-stone-500 font-bold mb-1">Score do Troféu</label>
+                                <input
+                                    type="number"
+                                    step="0.1"
+                                    value={killDetails.trophyScore}
+                                    onChange={(e) => setKillDetails(prev => ({ ...prev, trophyScore: e.target.value }))}
+                                    className="w-full bg-stone-950 border border-stone-800 rounded px-3 py-2 text-sm text-white focus:border-green-600 focus:outline-none transition-colors"
+                                    placeholder="Ex: 250.0"
+                                />
+                            </div>
+
+                            {/* Dificuldade */}
+                            <div>
+                                <label className="block text-[10px] uppercase text-stone-500 font-bold mb-1">Dificuldade (1-10)</label>
+                                <div className="flex gap-1 overflow-x-auto pb-1 no-scrollbar">
+                                    {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map(level => (
                                         <button
-                                            onClick={() => setShowKillDetailsModal(false)}
-                                            className="text-stone-500 hover:text-white transition-colors"
-                                        >
-                                            <i className="fa-solid fa-times"></i>
-                                        </button>
-                                    </div>
-
-                                    <div className="p-4 space-y-4">
-                                        {/* Info do Tipo */}
-                                        <div className="flex gap-2 flex-wrap">
-                                            {pendingKillData.isDiamond && <span className="px-2 py-1 bg-cyan-900/30 text-cyan-400 text-[10px] rounded border border-cyan-800">DIAMANTE</span>}
-                                            {pendingKillData.isGreatOne && <span className="px-2 py-1 bg-yellow-900/30 text-yellow-400 text-[10px] rounded border border-yellow-800">GREAT ONE</span>}
-                                            {pendingKillData.isTroll && <span className="px-2 py-1 bg-orange-900/30 text-orange-400 text-[10px] rounded border border-orange-800">TROLL</span>}
-                                            {pendingKillData.furTypeName && <span className="px-2 py-1 bg-pink-900/30 text-pink-400 text-[10px] rounded border border-pink-800">{pendingKillData.furTypeName}</span>}
-                                            {!pendingKillData.isDiamond && !pendingKillData.isGreatOne && !pendingKillData.isTroll && !pendingKillData.furTypeName && <span className="px-2 py-1 bg-stone-800 text-stone-400 text-[10px] rounded border border-stone-700">ABATE NORMAL</span>}
-                                        </div>
-
-                                        {/* Peso */}
-                                        <div>
-                                            <label className="block text-[10px] uppercase text-stone-500 font-bold mb-1">Peso (kg)</label>
-                                            <input
-                                                type="number"
-                                                step="0.01"
-                                                value={killDetails.weight}
-                                                onChange={(e) => setKillDetails(prev => ({ ...prev, weight: e.target.value }))}
-                                                className="w-full bg-stone-950 border border-stone-800 rounded px-3 py-2 text-sm text-white focus:border-green-600 focus:outline-none transition-colors"
-                                                placeholder="Ex: 120.5"
-                                            />
-                                        </div>
-
-                                        {/* Score */}
-                                        <div>
-                                            <label className="block text-[10px] uppercase text-stone-500 font-bold mb-1">Score do Troféu</label>
-                                            <input
-                                                type="number"
-                                                step="0.1"
-                                                value={killDetails.trophyScore}
-                                                onChange={(e) => setKillDetails(prev => ({ ...prev, trophyScore: e.target.value }))}
-                                                className="w-full bg-stone-950 border border-stone-800 rounded px-3 py-2 text-sm text-white focus:border-green-600 focus:outline-none transition-colors"
-                                                placeholder="Ex: 250.0"
-                                            />
-                                        </div>
-
-                                        {/* Dificuldade */}
-                                        <div>
-                                            <label className="block text-[10px] uppercase text-stone-500 font-bold mb-1">Dificuldade (1-10)</label>
-                                            <div className="flex gap-1 overflow-x-auto pb-1 no-scrollbar">
-                                                {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map(level => (
-                                                    <button
-                                                        key={level}
-                                                        onClick={() => setKillDetails(prev => ({ ...prev, difficultyLevel: String(level) }))}
-                                                        className={`
+                                            key={level}
+                                            onClick={() => setKillDetails(prev => ({ ...prev, difficultyLevel: String(level) }))}
+                                            className={`
                                                 w-8 h-8 shrink-0 rounded flex items-center justify-center text-xs font-bold border transition-all
                                                 ${killDetails.difficultyLevel === String(level)
-                                                                ? 'bg-green-600 border-green-500 text-white shadow-[0_0_10px_rgba(22,163,74,0.4)]'
-                                                                : 'bg-stone-800 border-stone-700 text-stone-400 hover:bg-stone-700 hover:text-white'}
+                                                    ? 'bg-green-600 border-green-500 text-white shadow-[0_0_10px_rgba(22,163,74,0.4)]'
+                                                    : 'bg-stone-800 border-stone-700 text-stone-400 hover:bg-stone-700 hover:text-white'}
                                             `}
-                                                    >
-                                                        {level}
-                                                    </button>
-                                                ))}
-                                            </div>
-                                        </div>
-                                    </div>
-
-                                    <div className="p-4 border-t border-stone-800 bg-stone-950/30 flex gap-2">
-                                        <button
-                                            onClick={() => setShowKillDetailsModal(false)}
-                                            className="flex-1 py-2 text-xs font-bold text-stone-400 hover:text-white transition-colors"
                                         >
-                                            CANCELAR
+                                            {level}
                                         </button>
-                                        <button
-                                            onClick={async () => {
-                                                await addKill(
-                                                    pendingKillData.isDiamond,
-                                                    pendingKillData.isGreatOne,
-                                                    pendingKillData.furTypeId,
-                                                    pendingKillData.furTypeName,
-                                                    pendingKillData.isTroll,
-                                                    killDetails.weight ? parseFloat(killDetails.weight) : null,
-                                                    killDetails.trophyScore ? parseFloat(killDetails.trophyScore) : null,
-                                                    killDetails.difficultyLevel ? parseInt(killDetails.difficultyLevel) : null
-                                                );
-                                                setShowKillDetailsModal(false);
-                                            }}
-                                            className="flex-1 py-2 bg-green-700 hover:bg-green-600 text-white text-xs font-bold rounded shadow-[0_0_15px_rgba(21,128,61,0.4)] transition-all"
-                                        >
-                                            CONFIRMAR
-                                        </button>
-                                    </div>
+                                    ))}
                                 </div>
                             </div>
-                        )}
+                        </div>
 
-                        <style>{`
+                        <div className="p-4 border-t border-stone-800 bg-stone-950/30 flex gap-2">
+                            <button
+                                onClick={() => setShowKillDetailsModal(false)}
+                                className="flex-1 py-2 text-xs font-bold text-stone-400 hover:text-white transition-colors"
+                            >
+                                CANCELAR
+                            </button>
+                            <button
+                                onClick={async () => {
+                                    await addKill(
+                                        pendingKillData.isDiamond,
+                                        pendingKillData.isGreatOne,
+                                        pendingKillData.furTypeId,
+                                        pendingKillData.furTypeName,
+                                        pendingKillData.isTroll,
+                                        killDetails.weight ? parseFloat(killDetails.weight) : null,
+                                        killDetails.trophyScore ? parseFloat(killDetails.trophyScore) : null,
+                                        killDetails.difficultyLevel ? parseInt(killDetails.difficultyLevel) : null
+                                    );
+                                    setShowKillDetailsModal(false);
+                                }}
+                                className="flex-1 py-2 bg-green-700 hover:bg-green-600 text-white text-xs font-bold rounded shadow-[0_0_15px_rgba(21,128,61,0.4)] transition-all"
+                            >
+                                CONFIRMAR
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            <style>{`
                     .glass-panel {
                         background: rgba(26, 26, 26, 0.4);
                         backdrop-filter: blur(3px);
@@ -1744,13 +1797,10 @@ export const Dashboard = () => {
                         position: relative;
                     }
                 `}</style>
-                    </div>
-                </div>
-            </div>
-
+            {/* Side Panel - Slides from right */}
             {/* Side Panel - Slides from right */}
             <NeedZonesPanel show={showNeedZonesPanel} onClose={() => setShowNeedZonesPanel(false)} />
+
         </div>
     );
-}
-
+};

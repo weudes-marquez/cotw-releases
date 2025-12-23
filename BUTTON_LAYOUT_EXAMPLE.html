@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>COTW Grind Counter - Button Layout</title>
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Font Awesome -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <!-- Google Fonts -->
+    <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;700&display=swap" rel="stylesheet">
+    
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        'hunter-orange': '#ff6b00',
+                        'go-gold': '#fbbf24',
+                    },
+                    fontFamily: {
+                        sans: ['Roboto', 'sans-serif'],
+                    }
+                }
+            }
+        }
+    </script>
+
+    <style>
+        body {
+            background-color: #1c1917; /* stone-900 */
+            color: white;
+            font-family: 'Roboto', sans-serif;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+        }
+        .container-mockup {
+            width: 360px;
+            padding: 20px;
+            background-color: #0c0a09; /* stone-950 */
+            border: 1px solid #292524; /* stone-800 */
+            border-radius: 8px;
+        }
+    </style>
+</head>
+<body>
+
+    <div class="container-mockup">
+        <h2 class="text-stone-400 text-xs uppercase font-bold mb-4 text-center">Layout dos Botões</h2>
+
+        <!-- BUTTON GRID START -->
+        <div class="space-y-2 relative z-10">
+            
+            <!-- Row 1: Diamond + Troll -->
+            <div class="grid grid-cols-2 gap-2">
+                <button
+                    title="Registrar diamante (diamante comum)"
+                    class="py-1.5 px-2 text-[9px] font-bold border border-blue-600/50 bg-gradient-to-r from-blue-900/20 via-blue-800/10 to-blue-900/20 text-blue-300 hover:bg-blue-500 hover:text-white hover:border-blue-400 hover:shadow-[0_0_15px_rgba(59,130,246,0.4)] transition-colors rounded-sm flex items-center justify-center gap-1 active:scale-[0.98]"
+                >
+                    <i class="fa-regular fa-gem text-sm"></i> DIAMANTE
+                </button>
+                <button
+                    title="Registrar Troll (nível máximo mas sem diamante)"
+                    class="py-1.5 px-2 text-[9px] font-bold border border-orange-600/50 bg-gradient-to-r from-orange-900/20 via-orange-800/10 to-orange-900/20 text-orange-400 hover:bg-orange-600 hover:text-white hover:border-orange-400 hover:shadow-[0_0_15px_rgba(249,115,22,0.4)] transition-colors rounded-sm flex items-center justify-center gap-1 active:scale-[0.98]"
+                >
+                    <i class="fa-solid fa-face-frown-open text-sm"></i> TROLL
+                </button>
+            </div>
+
+            <!-- Row 2: Rare + Diamond Rare -->
+            <div class="grid grid-cols-2 gap-2">
+                <button
+                    title="Registrar pelagem rara"
+                    class="py-1.5 px-2 text-[9px] font-bold border border-purple-600/50 bg-gradient-to-r from-purple-900/20 via-purple-800/10 to-purple-900/20 text-purple-300 hover:bg-purple-500 hover:text-white hover:border-purple-400 hover:shadow-[0_0_15px_rgba(168,85,247,0.4)] transition-colors rounded-sm flex items-center justify-center gap-1 active:scale-[0.98]"
+                >
+                    <i class="fa-solid fa-star text-sm"></i> RARO
+                </button>
+                <button
+                    title="Registrar Diamante Raro (diamante + pelagem rara)"
+                    class="py-1.5 px-2 text-[9px] font-bold border border-cyan-600/50 bg-gradient-to-r from-cyan-900/20 via-blue-900/10 to-purple-900/20 text-cyan-300 hover:bg-gradient-to-r hover:from-cyan-600 hover:via-blue-500 hover:to-purple-600 hover:text-white hover:border-cyan-400 hover:shadow-[0_0_20px_rgba(34,211,238,0.4)] transition-colors rounded-sm flex items-center justify-center gap-1 active:scale-[0.98]"
+                >
+                    <i class="fa-regular fa-gem text-sm"></i>
+                    <i class="fa-solid fa-star text-xs"></i>
+                    <span class="tracking-tighter">DIAMANTE RARO</span>
+                </button>
+            </div>
+
+            <!-- Row 3: GREAT ONE (Full Width) -->
+            <button
+                title="Registrar Great One! (o troféu máximo)"
+                class="w-full py-2 px-2 text-[10px] font-bold border border-yellow-600/50 bg-gradient-to-r from-yellow-900/20 via-yellow-800/10 to-yellow-900/20 text-go-gold hover:bg-gradient-to-r hover:from-yellow-600 hover:via-yellow-500 hover:to-yellow-600 hover:text-white hover:border-go-gold hover:shadow-[0_0_20px_rgba(251,191,36,0.4)] transition-colors rounded-sm flex items-center justify-center gap-2 group active:scale-[0.98]"
+            >
+                <i class="fa-solid fa-crown text-sm group-hover:animate-bounce"></i>
+                <span class="tracking-[0.2em] text-sm">GREAT ONE</span>
+            </button>
+
+        </div>
+        <!-- BUTTON GRID END -->
+
+    </div>
+
+</body>
+</html>

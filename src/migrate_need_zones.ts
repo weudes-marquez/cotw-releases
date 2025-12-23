@@ -5,7 +5,7 @@
 
 import { getFirestore, collection, getDocs, doc, getDoc } from 'firebase/firestore';
 import { getNeedZones, getMaps, getSpecies } from './supabase_integration';
-import { supabase } from './supabase_integration';
+import { supabase } from './supabase_client';
 
 interface MigrationProgress {
     totalSpecies: number;
