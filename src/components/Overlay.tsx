@@ -86,7 +86,7 @@ export const Overlay: React.FC = () => {
         const interval = setInterval(loadData, 2000);
 
         // Inicialmente, deixa o mouse passar direto (click-through)
-        window.ipcRenderer.send('set-ignore-mouse-events', true, { forward: true });
+        (window as any).ipcRenderer.send('set-ignore-mouse-events', true, { forward: true });
 
         return () => clearInterval(interval);
     }, []);
@@ -98,16 +98,16 @@ export const Overlay: React.FC = () => {
         <div className="fixed top-0 left-0 w-screen h-screen pointer-events-none select-none overflow-hidden bg-transparent">
 
             {/* HUD Container - Interativo apenas ao passar o mouse */}
-            <div className="absolute top-0 left-0 w-full flex items-start justify-center pt-[50px] pointer-events-none">
+            <div className="absolute top-0 left-0 w-full flex items-start justify-center pointer-events-none">
                 <div
                     className="flex items-center gap-12 px-4 py-2 drag-region bg-black/0 hover:bg-black/20 transition-colors rounded-xl pointer-events-auto"
                     onMouseEnter={() => {
                         // Quando o mouse entra na área dos ícones, captura os eventos (permite clique/arraste)
-                        window.ipcRenderer.send('set-ignore-mouse-events', false);
+                        (window as any).ipcRenderer.send('set-ignore-mouse-events', false);
                     }}
                     onMouseLeave={() => {
                         // Quando sai, deixa passar direto novamente
-                        window.ipcRenderer.send('set-ignore-mouse-events', true, { forward: true });
+                        (window as any).ipcRenderer.send('set-ignore-mouse-events', true, { forward: true });
                     }}
                 >
 

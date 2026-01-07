@@ -6,17 +6,14 @@ Este documento descreve as funcionalidades planejadas e melhorias futuras para o
 
 ## 🚀 Próximas Funcionalidades
 
-### 🖥️ Interface e Overlay
-- [ ] **Overlay Superior (Top Bar)**: Implementar uma camada (layer) transparente na parte superior do monitor para exibir dados de abates em tempo real sem precisar alternar janelas.
-- [ ] **Layer de Estatísticas Rápidas**: Atalho global para exibir/esconder uma camada flutuante com as estatísticas principais do grind atual.
-- [ ] **Controle de Opacidade**: Permitir que o usuário defina o nível de transparência das camadas de estatísticas e overlays para melhor integração com o jogo.
+### 🏆 Sala de Troféus Virtual 3D
+- [ ] **Ambiente 3D Interativo**: Criar uma galeria virtual usando Three.js para exibir os troféus mais importantes do usuário.
+- [ ] **Visualização 2.5D (Display de Luxo)**: Implementar um sistema de pedestais 3D onde os prints dos animais são exibidos como displays de alta qualidade com iluminação dinâmica.
+- [ ] **Rotação e Zoom**: Permitir que o usuário interaja com o troféu, girando a base e aproximando a câmera para ver detalhes.
 
-### 🎨 Visual e Identidade
-- [ ] **Novos Ícones de Categoria**: Adicionar ícones personalizados e temáticos para identificar rapidamente:
-  - 💎 Diamantes
-  - ✨ Pelagens Raras
-  - 🏆 Great Ones
-  - 👹 Trolls
+### 🖥️ Interface e Overlay
+- [ ] **Controle de Opacidade**: Permitir que o usuário defina o nível de transparência das camadas de estatísticas e overlays para melhor integração com o jogo.
+- [ ] **Customização de Layout**: Permitir que o usuário arraste e redimensione os elementos do HUD do Overlay.
 
 ### ⚙️ Funcionalidades de Sistema
 - [ ] **Melhoria nos Atalhos Globais**: Expandir a biblioteca de hotkeys para controlar todas as novas camadas de overlay.
@@ -25,6 +22,9 @@ Este documento descreve as funcionalidades planejadas e melhorias futuras para o
 ---
 
 ## ✅ Concluído recentemente
+- [x] **Overlay Superior (HUD)**: Implementado com transparência, click-through inteligente e atalho global `Alt+Shift+H`.
+- [x] **Local First (IndexedDB)**: Implementação de banco de dados local via Dexie.js para funcionamento offline e sincronização em tempo real.
+- [x] **Ícones Personalizados**: Adicionados ícones temáticos para Diamantes, Great Ones, Rares, Trolls e Super Rares no Overlay.
 - [x] **Correção Crítica do Contador**: Implementação de lógica baseada em `COUNT` real do banco de dados para evitar perda de abates.
 - [x] **Sincronização de Sessão**: Unificação dos contadores principal e de sessão.
 - [x] **Proteção de UI**: Adicionado delay (cooldown) de 300ms e indicadores de carregamento para evitar inconsistências.

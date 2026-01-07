@@ -1106,9 +1106,17 @@ export const Dashboard = () => {
                         {showStats && (
                             <div className="absolute inset-0 z-50 bg-stone-950/95 backdrop-blur-md flex flex-col">
                                 <div className="p-2 border-b border-white/10 flex justify-between items-center bg-stone-900 shadow-lg">
-                                    <h3 className="font-serif text-white uppercase tracking-wider text-xs">
-                                        <i className="fa-solid fa-chart-pie text-hunter-orange mr-2"></i> Estatísticas
-                                    </h3>
+                                    <div className="flex items-center gap-4">
+                                        <h3 className="font-serif text-white uppercase tracking-wider text-xs">
+                                            <i className="fa-solid fa-chart-pie text-hunter-orange mr-2"></i> Estatísticas
+                                        </h3>
+                                        <button
+                                            onClick={() => window.ipcRenderer.invoke('open-detailed-stats')}
+                                            className="bg-hunter-orange/20 hover:bg-hunter-orange/30 text-white text-[10px] px-2 py-1 rounded border border-hunter-orange/30 transition-all flex items-center gap-1"
+                                        >
+                                            <i className="fa-solid fa-magnifying-glass-chart"></i> Ver Detalhes
+                                        </button>
+                                    </div>
                                     <button
                                         onClick={() => setShowStats(false)}
                                         className="text-stone-400 hover:text-white transition-colors w-7 h-7 flex items-center justify-center rounded-full hover:bg-white/10"
@@ -1800,7 +1808,6 @@ export const Dashboard = () => {
             {/* Side Panel - Slides from right */}
             {/* Side Panel - Slides from right */}
             <NeedZonesPanel show={showNeedZonesPanel} onClose={() => setShowNeedZonesPanel(false)} />
-
         </div>
     );
 };

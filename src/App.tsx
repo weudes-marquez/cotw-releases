@@ -4,6 +4,7 @@ import { Dashboard } from './components/Dashboard';
 import { Overlay } from './components/Overlay';
 import { UserGuide } from './components/UserGuide';
 import { NeedZonesPanel } from './components/NeedZonesPanel';
+import { DetailedStats } from './components/DetailedStats';
 import { useEffect, useState } from 'react';
 import { auth } from './firebase';
 import { onAuthStateChanged } from 'firebase/auth';
@@ -13,9 +14,7 @@ function App() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-
     const unsubscribe = onAuthStateChanged(auth, (user) => {
-
       setUser(user);
       setLoading(false);
     });
@@ -23,29 +22,28 @@ function App() {
   }, []);
 
   if (loading) {
-
     const isOverlay = window.location.hash.includes('overlay');
+    const isDetailedStats = window.location.hash.includes('detailed-stats');
+    const isTransparent = isOverlay || isDetailedStats;
 
     return (
       <div style={{
         width: '100%',
         height: '100vh',
-        backgroundColor: isOverlay ? 'transparent' : '#111827',
+        backgroundColor: isTransparent ? 'transparent' : '#111827',
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
-        color: isOverlay ? 'transparent' : 'white',
+        color: isTransparent ? 'transparent' : 'white',
         fontSize: '24px',
         margin: 0,
         padding: 0,
         overflow: 'hidden'
       }}>
-        {!isOverlay && 'Loading authentication...'}
+        {!isTransparent && 'Loading authentication...'}
       </div>
     );
   }
-
-
 
   return (
     <HashRouter>
@@ -55,6 +53,7 @@ function App() {
         <Route path="/overlay" element={<Overlay />} />
         <Route path="/guide" element={<UserGuide />} />
         <Route path="/need-zones/:position" element={<NeedZonesPanel show={true} onClose={() => window.close()} />} />
+        <Route path="/detailed-stats" element={<DetailedStats />} />
         <Route path="/" element={<Navigate to={user ? "/dashboard" : "/login"} />} />
       </Routes>
     </HashRouter>

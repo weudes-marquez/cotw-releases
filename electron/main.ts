@@ -18,11 +18,12 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url))
 // │ └─ preload.js
 //
 process.env.DIST = path.join(__dirname, '../dist')
-process.env.VITE_PUBLIC = app.isPackaged ? process.env.DIST : path.join(process.env.DIST, '../public')
+process.env.VITE_PUBLIC = app.isPackaged ? process.env.DIST : path.join(process.env.DIST!, '../public')
 
 let win: BrowserWindow | null
 let overlayWin: BrowserWindow | null
 let needZonesWin: BrowserWindow | null = null
+let detailedStatsWin: BrowserWindow | null = null
 
 const VITE_DEV_SERVER_URL = process.env['VITE_DEV_SERVER_URL']
 
@@ -30,11 +31,11 @@ function createWindow() {
     console.log('🔵 Creating main window...')
     win = new BrowserWindow({
         width: 480, // Login screen width
-        height: 640, // Login screen height
+        height: 850, // Increased height to prevent scrollbar during grind
         minWidth: 340,
         minHeight: 450,
         maxWidth: 550,
-        maxHeight: 750,
+        maxHeight: 850,
         alwaysOnTop: true,
         resizable: true,
         frame: false, // Remove native borders as requested
@@ -46,6 +47,13 @@ function createWindow() {
             nodeIntegration: false,
             contextIsolation: true,
         },
+    })
+
+    win.setAlwaysOnTop(true, 'screen-saver')
+    win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true })
+
+    win.on('focus', () => {
+        win?.setAlwaysOnTop(true, 'screen-saver')
     })
 
     // Configurar Content Security Policy (CSP) para segurança
@@ -92,7 +100,7 @@ function createWindow() {
         win.loadURL(VITE_DEV_SERVER_URL)
     } else {
         // win.loadFile('dist/index.html')
-        win.loadFile(path.join(process.env.DIST, 'index.html'))
+        win.loadFile(path.join(process.env.DIST!, 'index.html'))
     }
 }
 
@@ -120,15 +128,22 @@ function createOverlayWindow() {
         },
     })
 
+    overlayWin.setAlwaysOnTop(true, 'screen-saver')
+    overlayWin.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true })
+
+    overlayWin.on('focus', () => {
+        overlayWin?.setAlwaysOnTop(true, 'screen-saver')
+    })
+
     // Load the overlay route
     const url = VITE_DEV_SERVER_URL
         ? `${VITE_DEV_SERVER_URL}#/overlay`
-        : path.join(process.env.DIST, 'index.html') + '#/overlay'
+        : path.join(process.env.DIST!, 'index.html') + '#/overlay'
 
     if (VITE_DEV_SERVER_URL) {
         overlayWin.loadURL(url)
     } else {
-        overlayWin.loadFile(path.join(process.env.DIST, 'index.html'), { hash: 'overlay' })
+        overlayWin.loadFile(path.join(process.env.DIST!, 'index.html'), { hash: 'overlay' })
     }
 
     overlayWin.on('closed', () => {
@@ -151,6 +166,111 @@ function closeOverlay() {
     // Garante que a janela principal apareça se necessário (opcional, mas bom pra UX)
     win?.show()
 }
+
+let isDetailedStatsClosing = false;
+
+function createDetailedStatsWindow() {
+    if (detailedStatsWin && !detailedStatsWin.isDestroyed()) {
+        if (isDetailedStatsClosing) return; // Don't focus if it's closing
+        detailedStatsWin.focus();
+        return;
+    }
+
+    detailedStatsWin = null;
+    isDetailedStatsClosing = false;
+
+    const primaryDisplay = screen.getPrimaryDisplay();
+    const { width: screenWidth, height: screenHeight, x: screenX, y: screenY } = primaryDisplay.workArea;
+
+    const winWidth = 900;
+    const winHeight = screenHeight;
+
+    detailedStatsWin = new BrowserWindow({
+        width: winWidth,
+        height: winHeight,
+        x: screenX + screenWidth - winWidth,
+        y: screenY - winHeight, // Start off-screen (top)
+        frame: false,
+        alwaysOnTop: true,
+        backgroundColor: '#1c1917',
+        webPreferences: {
+            preload: path.join(__dirname, 'preload.mjs'),
+            nodeIntegration: false,
+            contextIsolation: true,
+        },
+        autoHideMenuBar: true,
+        show: false,
+    });
+
+    detailedStatsWin.setAlwaysOnTop(true, 'screen-saver')
+    detailedStatsWin.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true })
+
+    detailedStatsWin.on('focus', () => {
+        detailedStatsWin?.setAlwaysOnTop(true, 'screen-saver')
+    })
+
+    if (VITE_DEV_SERVER_URL) {
+        detailedStatsWin.loadURL(`${VITE_DEV_SERVER_URL}#/detailed-stats`);
+    } else {
+        detailedStatsWin.loadFile(path.join(process.env.DIST!, 'index.html'), { hash: 'detailed-stats' });
+    }
+
+    detailedStatsWin.once('ready-to-show', () => {
+        if (!detailedStatsWin) return;
+        detailedStatsWin.show();
+
+        // Slide down animation
+        let currentY = screenY - winHeight;
+        const targetY = screenY;
+        const step = 40;
+
+        const animateIn = setInterval(() => {
+            if (!detailedStatsWin) {
+                clearInterval(animateIn);
+                return;
+            }
+            currentY += step;
+            if (currentY >= targetY) {
+                currentY = targetY;
+                clearInterval(animateIn);
+            }
+            detailedStatsWin.setBounds({ x: screenX + screenWidth - winWidth, y: currentY, width: winWidth, height: winHeight });
+        }, 10);
+    });
+
+    // Handle slide up on close
+    detailedStatsWin.on('close', (e) => {
+        if (isDetailedStatsClosing) return;
+        e.preventDefault();
+        isDetailedStatsClosing = true;
+
+        let currentY = detailedStatsWin!.getBounds().y;
+        const targetY = screenY - winHeight;
+        const step = 40;
+
+        const animateOut = setInterval(() => {
+            if (!detailedStatsWin) {
+                clearInterval(animateOut);
+                return;
+            }
+            currentY -= step;
+            if (currentY <= targetY) {
+                currentY = targetY;
+                clearInterval(animateOut);
+                detailedStatsWin.destroy();
+                detailedStatsWin = null;
+                isDetailedStatsClosing = false;
+            } else {
+                detailedStatsWin.setBounds({ x: screenX + screenWidth - winWidth, y: currentY, width: winWidth, height: winHeight });
+            }
+        }, 10);
+    });
+}
+
+// IPC Handlers
+ipcMain.handle('open-detailed-stats', () => {
+    createDetailedStatsWindow();
+});
 
 // IPC for Overlay
 ipcMain.handle('toggle-overlay', (_event, show?: boolean) => {
@@ -289,7 +409,7 @@ ipcMain.on('open-user-guide', () => {
 
     const url = VITE_DEV_SERVER_URL
         ? `${VITE_DEV_SERVER_URL}#/guide`
-        : path.join(process.env.DIST, 'index.html') + '#/guide'
+        : path.join(process.env.DIST!, 'index.html') + '#/guide'
 
     if (VITE_DEV_SERVER_URL) {
         guideWin.loadURL(url)
