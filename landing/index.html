@@ -1,0 +1,455 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+    <!-- SEO Meta Tags -->
+    <title>Grind Counter para theHunter (COTW) | App de Contagem e Overlay</title>
+    <meta name="description"
+        content="O aplicativo definitivo para theHunter: Call of the Wild. Controle seus abates de forma fácil e discreta sem sair do jogo. Baixe o App COTW grátis.">
+    <meta name="keywords"
+        content="theHunter: Call of the Wild, COTW, Grind Counter, Overlay, Tracker, Aplicativo COTW, App COTW, COTW farm, Great Ones">
+    <meta name="author" content="Grind Counter Community">
+
+    <!-- Open Graph / Facebook -->
+    <meta property="og:type" content="website">
+    <meta property="og:title" content="Grind Counter | Domine o theHunter: COTW">
+    <meta property="og:description"
+        content="Controle total de abates sem tirar os olhos do alvo. Interface não-intrusiva para caçadores de elite.">
+    <meta property="og:image" content="assets/app-tela-contador.png">
+
+    <!-- Twitter -->
+    <meta property="twitter:card" content="summary_large_image">
+    <meta property="twitter:title" content="Grind Counter | Domine o theHunter: COTW">
+    <meta property="twitter:description"
+        content="Controle total de abates sem tirar os olhos do alvo. Interface não-intrusiva para caçadores de elite.">
+    <meta property="twitter:image" content="assets/app-tela-contador.png">
+
+    <!-- Fonts & Icons -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link
+        href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;800&family=Oswald:wght@400;700&display=swap"
+        rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+
+    <!-- Custom CSS -->
+    <link rel="stylesheet" href="style.css">
+
+    <!-- Preload Critical Resources -->
+    <link rel="preload" href="assets/01.mp4" as="video" type="video/mp4">
+    <link rel="preload" href="assets/tela-login.webp" as="image">
+    <link rel="preload" href="assets/tela-contador.webp" as="image">
+
+    <!-- Favicon -->
+    <link rel="icon" type="image/x-icon" href="assets/favicon.ico">
+    <link rel="icon" type="image/png" href="assets/icon.png">
+</head>
+
+<body>
+
+    <!-- FIXED BACKGROUND -->
+    <div class="hero-fixed-bg">
+        <video autoplay muted loop playsinline class="hero-video">
+            <source src="assets/01.mp4" type="video/mp4">
+        </video>
+        <div class="hero-bg"></div>
+    </div>
+
+    <!-- HERO SECTION -->
+    <section class="hero visible">
+        <div class="hero-top">
+            <div class="hero-logo-plate">
+                <img src="assets/icon.png" alt="Logo do COTW Pin Planner" class="app-icon">
+                <span>COTW PIN PLANNER PRESENTS</span>
+            </div>
+        </div>
+
+        <div class="hero-container">
+            <div class="hero-side left">
+                <div class="hero-mockup" id="mockup-login">
+                    <img src="assets/tela-login.webp" alt="Interface de login segura e moderna do Grind Counter">
+                </div>
+            </div>
+
+            <div class="hero-content">
+                <!-- Default Content -->
+                <div id="content-default" class="content-block active">
+                    <h1>COTW GRIND <br><span>COUNTER OVERLAY</span></h1>
+                    <p>O contador de abates definitivo para theHunter: COTW. <br>Pare de usar celular ou papel. Mantenha
+                        o foco no jogo.</p>
+                    <a href="https://github.com/seu-usuario/seu-repo/releases/latest" class="btn" target="_blank">
+                        <i class="fab fa-windows"></i> BAIXAR PARA WINDOWS
+                    </a>
+                    <div class="compatibility-badge">
+                        <i class="fab fa-windows"></i> Compatível com Windows 10/11
+                    </div>
+                    <div class="coming-soon-badge">
+                        <i class="fab fa-android"></i> <i class="fab fa-apple"></i> Em breve para Android e iOS
+                    </div>
+                    <div style="margin-top: 15px; font-size: 0.8rem; color: #666;">
+                        v1.0.0 | Grátis
+                    </div>
+                </div>
+
+                <!-- Login Info Content -->
+                <div id="content-login" class="content-block">
+                    <h1>CONTA <br><span>UNIFICADA</span></h1>
+                    <p>Se você já tem uma conta Pin Planner é só baixar e usar.<br>
+                        Se você não tem acesse <a href="https://cotwpinplanner.app" target="_blank"
+                            style="color: var(--hunter-orange); text-decoration: none; font-weight: bold;">COTW Pin
+                            Planner</a> e crie uma conta para usar o COTW Grind Counter Overlay.</p>
+                    <button class="btn-back" onclick="showContent('default')">
+                        <i class="fas fa-arrow-left"></i> VOLTAR
+                    </button>
+                </div>
+
+                <!-- Features Info Content -->
+                <div id="content-features" class="content-block">
+                    <h1>RECURSOS <br><span>DO APP</span></h1>
+                    <p>Você NÃO PRECISA mais de celular ou papel.<br>
+                        Contador de Abates, funciona junto com o jogo, HUD compacto e estatísticas detalhadas de cada
+                        caçada.<br>
+                        Tudo projetado para não interromper a imersão da sua caçada, do seu grind e ainda te auxiliar de
+                        maneira discreta.</p>
+                    <button class="btn-back" onclick="showContent('default')">
+                        <i class="fas fa-arrow-left"></i> VOLTAR
+                    </button>
+                </div>
+            </div>
+
+            <div class="hero-side right">
+                <div class="hero-mockup" id="mockup-counter">
+                    <img src="assets/tela-contador.webp"
+                        alt="Contador de abates em tempo real with interface minimalista">
+                </div>
+            </div>
+        </div>
+
+
+
+        <!-- Scroll Indicator -->
+        <div class="scroll-indicator">
+            <i class="fas fa-chevron-down"></i>
+        </div>
+    </section>
+
+    <!-- FEATURE 1: O CONTADOR -->
+    <section class="feature-grind">
+        <div class="container">
+            <div class="text-col">
+                <h2>CONTROLE SEU GRIND</h2>
+                <p>Chega de Alt+Tab ou anotações no celular. Com o <strong>Grind Counter</strong>, você registra seus
+                    abates instantaneamente através de atalhos personalizados.</p>
+
+                <div class="feature-list">
+                    <p><i class="fa-solid fa-check" style="color: var(--hunter-orange)"></i> Atalhos configuráveis</p>
+                    <p><i class="fa-solid fa-check" style="color: var(--hunter-orange)"></i> Overlay de abates</p>
+                    <p><i class="fa-solid fa-check" style="color: var(--hunter-orange)"></i> Contador sempre visível
+                        mesmo com o jogo aberto</p>
+                </div>
+                <a href="https://github.com/seu-usuario/seu-repo/releases/latest" class="btn btn-section"
+                    target="_blank">
+                    <i class="fab fa-windows"></i> BAIXAR AGORA
+                </a>
+            </div>
+            <div class="img-col">
+                <div class="carousel-container">
+                    <div class="carousel-slide active">
+                        <img src="assets/in-game/banner-modo discreto.webp" alt="HUD e Bandeja in-game" loading="lazy">
+                    </div>
+                    <div class="carousel-slide">
+                        <img src="assets/in-game/tela-atalhos-in-game.webp" alt="Atalhos in-game" loading="lazy">
+                    </div>
+                    <div class="carousel-slide">
+                        <img src="assets/in-game/tela-contador-in-game.webp" alt="Contador in-game" loading="lazy">
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- FEATURE 2: ESTATÍSTICAS -->
+    <section class="feature-stats">
+        <div class="container">
+            <div class="img-col">
+                <div class="mockup">
+                    <div class="mockup-body">
+                        <img src="assets/in-game/tela-estatisticas-in-game-02.webp"
+                            alt="Estatísticas detalhadas de abates e progresso do grind" loading="lazy">
+                    </div>
+                </div>
+            </div>
+            <div class="text-col">
+                <h2>ESTATÍSTICAS DE ABATES</h2>
+                <p>Quantos Diamantes você já pegou?</p>
+                <p>Quantos abates até o Great One? O app gerencia tudo pra você.</p>
+                <p>Visualize todas as médias mais importantes de abates.</p>
+                <p>Saiba quando poderá ser seu próximo animal diamante ou great one.</p>
+            </div>
+        </div>
+    </section>
+
+    <!-- FEATURE 3: BANDEJA / NÃO INTRUSIVO -->
+    <section class="feature-tray">
+        <div class="container">
+            <div class="text-col">
+                <h2>INVISÍVEL QUANDO PRECISA</h2>
+                <p>Precisa de imersão total? Com um clique, o app se recolhe para uma bandeja lateral discreta,
+                    liberando 100% da sua visão.</p>
+                <p>Arraste a bandeja para qualquer altura da tela para personalizar seu setup. O Grind Counter respeita
+                    seu espaço de tela.</p>
+            </div>
+            <div class="img-col">
+                <div class="mockup tray-mockup">
+                    <div class="mockup-body">
+                        <img src="assets/tela-hud-bandeja-in-game.webp"
+                            alt="Modo bandeja do Grind Counter recolhido na lateral da tela" loading="lazy">
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- FEATURE: HUD DE CAÇA -->
+    <section class="feature-hud">
+        <div class="container">
+            <div class="img-col">
+                <div class="mockup">
+                    <div class="mockup-body">
+                        <img src="assets/app-tela-hud.webp"
+                            alt="Modo HUD Overlay compacto que sobrepõe o jogo sem atrapalhar a visão" loading="lazy">
+                    </div>
+                </div>
+            </div>
+            <div class="text-col">
+                <h2>HUD OVERLAY DE ABATES</h2>
+                <p>Um overlay discreto que mostra apenas o essencial. Mantenha o controle dos seus abates sem poluir sua
+                    visão periférica.</p>
+                <p>O HUD se integra perfeitamente à interface do jogo, permitindo que você acompanhe seu progresso em
+                    tempo real sem distrações.</p>
+            </div>
+        </div>
+    </section>
+
+    <!-- FEATURE: HORÁRIOS DE NECESSIDADE -->
+    <section class="feature-needs">
+        <div class="container">
+            <div class="text-col">
+                <h2>HORÁRIOS DE NECESSIDADE</h2>
+                <p>Consulte rapidamente os horários de alimentação, bebida e descanso de todas as espécies. Planeje sua
+                    rota de caça com precisão cirúrgica ao aliar o COTW Grind Counter Overlay ao COTW Pin Planner.</p>
+                <p>Não perca mais tempo procurando no celular ou qualquer site. Tenha a tabela completa de horários
+                    sempre in-game, organizada por mapa e espécie.</p>
+            </div>
+            <div class="img-col">
+                <div class="mockup">
+                    <div class="mockup-body">
+                        <img src="assets/in-game/tela-hora-necessidade-in-game.webp"
+                            alt="Tabela detalhada com horários de necessidade de todas as espécies do COTW"
+                            loading="lazy">
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- FEATURE: GUIA DE USO -->
+    <section class="feature-guide">
+        <div class="container">
+            <div class="img-col">
+                <div class="mockup">
+                    <div class="mockup-body">
+                        <img src="assets/in-game/tela-guia-in-game.webp" alt="Guia de uso do aplicativo" loading="lazy">
+                    </div>
+                </div>
+            </div>
+            <div class="text-col">
+                <h2>GUIA DE USO DO APP</h2>
+                <p>Dicas de como usar cada funcionalidade do aplicativo.</p>
+                <p>Informações de uso e compatibilidade com o jogo.</p>
+            </div>
+        </div>
+    </section>
+
+    <!-- IMAGE LIGHTBOX MODAL -->
+    <div id="lightbox" class="lightbox">
+        <span class="lightbox-close">&times;</span>
+        <img class="lightbox-content" id="lightbox-img" alt="Imagem ampliada">
+    </div>
+
+    <!-- FLOATING BUTTONS -->
+    <div class="floating-buttons">
+        <button id="btn-share" class="floating-btn" title="Compartilhar com um amigo">
+            <i class="fas fa-share-alt"></i>
+        </button>
+        <button id="btn-top" class="floating-btn" title="Voltar ao topo">
+            <i class="fas fa-chevron-up"></i>
+        </button>
+    </div>
+
+    <!-- FOOTER -->
+    <footer>
+        <div class="footer-logo">
+            <img src="assets/icon.png" alt="Logo do COTW Pin Planner" class="footer-icon">
+            COTW GRIND COUNTER <span>OVERLAY</span>
+        </div>
+        <p style="color: #666; margin-bottom: 10px;">Um aplicativo auxiliar do <strong>COTW Pin Planner</strong>.</p>
+        <p style="color: #666; margin-bottom: 30px;">Feito pela comunidade, para a comunidade.</p>
+
+        <div class="legal">
+            <p>theHunter: Call of the Wild™ é uma marca registrada da Expansive Worlds AB. O COTW Grind Counter Overlay
+                é um projeto
+                de fã, gratuito, não afiliado à desenvolvedora do jogo.</p>
+            <p style="margin-top: 20px;">&copy; 2025 COTW Pin Planner Project.</p>
+        </div>
+    </footer>
+
+    <!-- Scripts -->
+    <script>
+        // Section Transition Logic
+        const sections = document.querySelectorAll('section');
+        const observerOptions = {
+            threshold: 0.2,
+            rootMargin: "-10% 0px -10% 0px"
+        };
+
+        const observer = new IntersectionObserver((entries) => {
+            entries.forEach(entry => {
+                const isAbove = entry.boundingClientRect.y < entry.rootBounds.y;
+
+                if (entry.isIntersecting) {
+                    entry.target.classList.add('visible');
+                    entry.target.classList.remove('exit-up');
+                } else {
+                    if (isAbove) {
+                        entry.target.classList.add('exit-up');
+                        entry.target.classList.remove('visible');
+                    } else {
+                        entry.target.classList.remove('visible');
+                        entry.target.classList.remove('exit-up');
+                    }
+                }
+            });
+        }, observerOptions);
+
+        sections.forEach(section => observer.observe(section));
+
+        // Carousel Logic
+        const slides = document.querySelectorAll('.carousel-slide');
+        let currentSlide = 0;
+
+        function nextSlide() {
+            if (slides.length === 0) return;
+            slides[currentSlide].classList.remove('active');
+            currentSlide = (currentSlide + 1) % slides.length;
+            slides[currentSlide].classList.add('active');
+        }
+
+        setInterval(nextSlide, 5000);
+
+        // Interactivity Logic (Hero Mockups)
+        const mockupLogin = document.getElementById('mockup-login');
+        const mockupCounter = document.getElementById('mockup-counter');
+
+        function showContent(type) {
+            document.querySelectorAll('.content-block').forEach(block => {
+                block.classList.remove('active');
+            });
+            const target = document.getElementById(`content-${type}`);
+            if (target) {
+                target.classList.add('active');
+            }
+        }
+
+        if (mockupLogin) mockupLogin.addEventListener('click', () => showContent('login'));
+        if (mockupCounter) mockupCounter.addEventListener('click', () => showContent('features'));
+
+        // Lightbox Logic
+        const lightbox = document.getElementById('lightbox');
+        const lightboxImg = document.getElementById('lightbox-img');
+        const lightboxClose = document.querySelector('.lightbox-close');
+
+        // Add click listeners to mockup images
+        document.querySelectorAll('.mockup-body img').forEach(img => {
+            img.addEventListener('click', (e) => {
+                e.stopPropagation();
+                lightbox.classList.add('active');
+                lightboxImg.src = img.src;
+            });
+        });
+
+        // Add click listener to carousel container (opens active slide)
+        document.querySelectorAll('.carousel-container').forEach(carousel => {
+            carousel.addEventListener('click', (e) => {
+                e.stopPropagation();
+                const activeSlide = carousel.querySelector('.carousel-slide.active img');
+                if (activeSlide) {
+                    lightbox.classList.add('active');
+                    lightboxImg.src = activeSlide.src;
+                }
+            });
+        });
+
+        // Close lightbox on click outside or X button
+        lightbox.addEventListener('click', (e) => {
+            if (e.target === lightbox || e.target === lightboxClose) {
+                lightbox.classList.remove('active');
+            }
+        });
+
+        // Close on Escape key
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape') {
+                lightbox.classList.remove('active');
+            }
+        });
+
+        // Floating Buttons Logic
+        const btnTop = document.getElementById('btn-top');
+        const btnShare = document.getElementById('btn-share');
+
+        // Show/hide buttons based on scroll position
+        window.addEventListener('scroll', () => {
+            const scrollY = window.scrollY;
+            if (scrollY > 300) {
+                btnTop.classList.add('visible');
+                btnShare.classList.add('visible');
+            } else {
+                btnTop.classList.remove('visible');
+                btnShare.classList.remove('visible');
+            }
+        });
+
+        // Back to top
+        btnTop.addEventListener('click', () => {
+            window.scrollTo({ top: 0, behavior: 'smooth' });
+        });
+
+        // Share functionality
+        btnShare.addEventListener('click', async () => {
+            const shareData = {
+                title: 'COTW Grind Counter Overlay',
+                text: 'Confira o contador de abates definitivo para theHunter: Call of the Wild!',
+                url: window.location.href
+            };
+
+            try {
+                if (navigator.share) {
+                    await navigator.share(shareData);
+                } else {
+                    // Fallback: copy to clipboard
+                    await navigator.clipboard.writeText(window.location.href);
+                    alert('Link copiado para a área de transferência!');
+                }
+            } catch (err) {
+                console.log('Compartilhamento cancelado');
+            }
+        });
+
+    </script>
+</body>
+
+</html>

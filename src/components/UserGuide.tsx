@@ -14,16 +14,22 @@ export const UserGuide = () => {
     return (
         <div className="h-screen w-full bg-stone-950 text-gray-100 flex">
             {/* Sidebar */}
-            <div className="w-64 bg-stone-900 border-r border-white/10 p-4">
-                <div className="mb-6">
-                    <h1 className="text-xl font-bold text-hunter-orange flex items-center gap-2">
+            <div className="w-64 bg-stone-900 border-r border-white/10 p-4 flex flex-col">
+                <div
+                    className="mb-6 cursor-move"
+                    style={{ WebkitAppRegion: 'drag' } as any}
+                >
+                    <h1 className="text-xl font-bold text-hunter-orange flex items-center gap-2 pointer-events-none select-none">
                         <i className="fa-solid fa-book"></i>
                         Guia de Uso
                     </h1>
-                    <p className="text-xs text-stone-400 mt-1">COTW Grind Counter</p>
+                    <p className="text-xs text-stone-400 mt-1 pointer-events-none select-none">COTW Grind Counter</p>
                 </div>
 
-                <nav className="space-y-2">
+                <nav
+                    className="space-y-2"
+                    style={{ WebkitAppRegion: 'no-drag' } as any}
+                >
                     {sections.map(section => (
                         <button
                             key={section.id}
@@ -42,6 +48,7 @@ export const UserGuide = () => {
                 <button
                     onClick={() => window.close()}
                     className="w-full mt-6 px-3 py-2 bg-stone-800 hover:bg-red-600 text-stone-400 hover:text-white rounded-sm  text-sm flex items-center justify-center gap-2"
+                    style={{ WebkitAppRegion: 'no-drag' } as any}
                 >
                     <i className="fa-solid fa-xmark"></i>
                     Fechar
@@ -66,6 +73,12 @@ export const UserGuide = () => {
                                         <li>Clique em "Iniciar Grind"</li>
                                         <li>Use o botão <code className="bg-stone-800 px-1 rounded">+</code> para cada abate</li>
                                     </ol>
+                                    <div className="mt-4 pt-4 border-t border-white/5 text-xs text-stone-400">
+                                        <p className="flex items-center gap-2">
+                                            <i className="fa-solid fa-circle-info text-blue-400"></i>
+                                            <span><strong>Dica:</strong> Se o app não aparecer sobre o jogo, use <kbd className="bg-stone-800 px-1 rounded border border-stone-700 font-mono">ALT + Enter</kbd> para alternar (ativar/desativar) o modo janela sem borda.</span>
+                                        </p>
+                                    </div>
                                 </div>
                             </div>
                         </div>
@@ -150,6 +163,20 @@ export const UserGuide = () => {
                                         <li><strong className="text-go-gold">Destaque Great One:</strong> Animais com Great One registrado ganham um brilho dourado especial na lista.</li>
                                     </ul>
                                 </div>
+
+                                <div className="bg-hunter-orange/10 border border-hunter-orange/30 p-4 rounded-sm mt-4">
+                                    <h3 className="font-bold text-hunter-orange mb-2 flex items-center gap-2">
+                                        <i className="fa-solid fa-magnifying-glass-chart"></i> Estatísticas Detalhadas
+                                    </h3>
+                                    <p className="text-xs leading-relaxed text-stone-300">
+                                        Ao clicar no botão <strong>"Ver Detalhes"</strong> em qualquer animal do histórico, você abre um painel avançado que mostra:
+                                    </p>
+                                    <ul className="list-disc list-inside mt-2 space-y-1 text-[11px] text-stone-400 ml-2">
+                                        <li>Distribuição exata de abates por tipo (Diamante, Raro, Troll, etc.)</li>
+                                        <li>Lista detalhada de todas as pelagens raras capturadas</li>
+                                        <li>Gráficos de progresso e eficiência do seu grind</li>
+                                    </ul>
+                                </div>
                             </div>
                         </div>
                     </div>
@@ -157,15 +184,37 @@ export const UserGuide = () => {
 
                 {activeSection === 'atalhos' && (
                     <div className="max-w-3xl space-y-6">
-                        <h2 className="text-2xl font-bold mb-4 text-hunter-orange">⌨️ Atalhos de Teclado</h2>
-                        <div className="space-y-3">
-                            <div className="bg-stone-900 p-3 rounded-sm border border-white/10 flex justify-between items-center">
-                                <span className="text-stone-300">Incrementar contador</span>
-                                <kbd className="bg-stone-800 px-3 py-1 rounded border border-stone-700 text-sm">Alt + Shift + =</kbd>
+                        <div className="flex justify-between items-center mb-4">
+                            <h2 className="text-2xl font-bold text-hunter-orange">⌨️ Atalhos de Teclado</h2>
+                            <span className="text-[10px] bg-hunter-orange/20 text-hunter-orange px-2 py-1 rounded font-bold uppercase tracking-wider">Customizáveis</span>
+                        </div>
+
+                        <div className="space-y-4 text-stone-300">
+                            <p className="text-sm">Os atalhos abaixo são <strong>globais</strong>, ou seja, funcionam mesmo quando você está com o jogo em foco.</p>
+
+                            <div className="space-y-2">
+                                {[
+                                    { label: 'Adicionar Abate', key: 'Numpad +' },
+                                    { label: 'Remover Abate', key: 'Numpad -' },
+                                    { label: 'Abrir Estatísticas', key: 'Alt + Shift + S' },
+                                    { label: 'Expandir / Recolher App', key: 'Alt + Shift + G' },
+                                    { label: 'Toggle HUD (Overlay)', key: 'Alt + Shift + H' },
+                                ].map((item, idx) => (
+                                    <div key={idx} className="bg-stone-900 p-3 rounded-sm border border-white/10 flex justify-between items-center">
+                                        <span className="text-sm">{item.label}</span>
+                                        <kbd className="bg-stone-800 px-3 py-1 rounded border border-stone-700 text-xs font-mono text-hunter-orange">{item.key}</kbd>
+                                    </div>
+                                ))}
                             </div>
-                            <div className="bg-stone-900 p-3 rounded-sm border border-white/10 flex justify-between items-center">
-                                <span className="text-stone-300">Decrementar contador</span>
-                                <kbd className="bg-stone-800 px-3 py-1 rounded border border-stone-700 text-sm">Alt + Shift + -</kbd>
+
+                            <div className="bg-blue-900/20 border border-blue-500/30 p-4 rounded-sm mt-6">
+                                <h3 className="text-blue-400 font-bold text-sm mb-2 flex items-center gap-2">
+                                    <i className="fa-solid fa-gear"></i> Como Personalizar:
+                                </h3>
+                                <p className="text-xs leading-relaxed">
+                                    Você pode alterar qualquer um desses atalhos clicando no ícone de <strong>Teclado</strong> <i className="fa-solid fa-keyboard mx-1"></i> no Dashboard.
+                                    Lá você pode gravar novas combinações ou resetar para o padrão do Teclado Numérico.
+                                </p>
                             </div>
                         </div>
                     </div>

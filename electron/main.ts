@@ -6,6 +6,7 @@ import log from 'electron-log'
 import { fileURLToPath } from 'node:url'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
+app.disableHardwareAcceleration()
 
 // The built directory structure
 //
@@ -24,14 +25,75 @@ let win: BrowserWindow | null
 let overlayWin: BrowserWindow | null
 let needZonesWin: BrowserWindow | null = null
 let detailedStatsWin: BrowserWindow | null = null
+let hotkeySettingsWin: BrowserWindow | null = null
 
 const VITE_DEV_SERVER_URL = process.env['VITE_DEV_SERVER_URL']
+
+function createHotkeySettingsWindow() {
+    if (hotkeySettingsWin) {
+        hotkeySettingsWin.focus()
+        return
+    }
+
+    // Calculate position next to main window
+    let x = undefined
+    let y = undefined
+    const winWidth = 360
+    const winHeight = 520
+
+    if (win) {
+        const winBounds = win.getBounds()
+        const display = screen.getDisplayMatching(winBounds)
+        const workArea = display.workArea
+
+        // Try to open to the right
+        x = winBounds.x + winBounds.width + 10
+
+        // If it would go off-screen to the right, try opening to the left
+        if (x + winWidth > workArea.x + workArea.width) {
+            x = winBounds.x - winWidth - 10
+        }
+
+        // Ensure it's within work area (clamping)
+        x = Math.max(workArea.x, Math.min(x, workArea.x + workArea.width - winWidth))
+        y = Math.max(workArea.y, Math.min(winBounds.y, workArea.y + workArea.height - winHeight))
+    }
+
+    hotkeySettingsWin = new BrowserWindow({
+        width: winWidth,
+        height: winHeight,
+        x,
+        y,
+        frame: false,
+        alwaysOnTop: true,
+        backgroundColor: '#1c1917',
+        webPreferences: {
+            preload: path.join(__dirname, 'preload.mjs'),
+            nodeIntegration: false,
+            contextIsolation: true,
+        },
+    })
+
+    const url = VITE_DEV_SERVER_URL
+        ? `${VITE_DEV_SERVER_URL}#/hotkeys`
+        : path.join(process.env.DIST!, 'index.html') + '#/hotkeys'
+
+    if (VITE_DEV_SERVER_URL) {
+        hotkeySettingsWin.loadURL(url)
+    } else {
+        hotkeySettingsWin.loadFile(path.join(process.env.DIST!, 'index.html'), { hash: 'hotkeys' })
+    }
+
+    hotkeySettingsWin.on('closed', () => {
+        hotkeySettingsWin = null
+    })
+}
 
 function createWindow() {
     console.log('🔵 Creating main window...')
     win = new BrowserWindow({
         width: 480, // Login screen width
-        height: 850, // Increased height to prevent scrollbar during grind
+        height: 640, // Match login screen height for smoother start
         minWidth: 340,
         minHeight: 450,
         maxWidth: 550,
@@ -121,6 +183,9 @@ function createOverlayWindow() {
         alwaysOnTop: true,
         resizable: false,
         hasShadow: false,
+        focusable: false, // Prevent stealing focus
+        skipTaskbar: true, // Don't show in taskbar
+        show: false, // Show only when ready
         webPreferences: {
             preload: path.join(__dirname, 'preload.mjs'),
             nodeIntegration: false,
@@ -131,8 +196,9 @@ function createOverlayWindow() {
     overlayWin.setAlwaysOnTop(true, 'screen-saver')
     overlayWin.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true })
 
-    overlayWin.on('focus', () => {
-        overlayWin?.setAlwaysOnTop(true, 'screen-saver')
+    // Only show when ready to avoid flickering
+    overlayWin.once('ready-to-show', () => {
+        overlayWin?.showInactive() // Show without taking focus
     })
 
     // Load the overlay route
@@ -272,6 +338,10 @@ ipcMain.handle('open-detailed-stats', () => {
     createDetailedStatsWindow();
 });
 
+ipcMain.on('open-hotkey-settings', () => {
+    createHotkeySettingsWindow();
+});
+
 // IPC for Overlay
 ipcMain.handle('toggle-overlay', (_event, show?: boolean) => {
     // Se 'show' for undefined, inverte o estado atual
@@ -395,17 +465,44 @@ ipcMain.on('open-user-guide', () => {
         return
     }
 
+    // Calculate position next to main window
+    let x = undefined
+    let y = undefined
+
+    if (win) {
+        const winBounds = win.getBounds()
+        const display = screen.getDisplayMatching(winBounds)
+        const workArea = display.workArea
+
+        // Try to open to the right
+        x = winBounds.x + winBounds.width + 10
+        y = winBounds.y
+
+        // If it would go off-screen to the right, try opening to the left
+        if (x + 900 > workArea.x + workArea.width) {
+            x = winBounds.x - 900 - 10
+        }
+
+        // Ensure it's within work area
+        x = Math.max(workArea.x, Math.min(x, workArea.x + workArea.width - 900))
+        y = Math.max(workArea.y, Math.min(y, workArea.y + workArea.height - 700))
+    }
+
     guideWin = new BrowserWindow({
         width: 900,
         height: 700,
+        x,
+        y,
         alwaysOnTop: false,
-        frame: true,
+        frame: false, // Remove system borders
         webPreferences: {
             preload: path.join(__dirname, 'preload.mjs'),
             nodeIntegration: false,
             contextIsolation: true,
         },
     })
+
+    guideWin.setMenuBarVisibility(false) // Remove menu bar
 
     const url = VITE_DEV_SERVER_URL
         ? `${VITE_DEV_SERVER_URL}#/guide`
@@ -424,6 +521,7 @@ ipcMain.on('open-user-guide', () => {
 
 // Tray state variables
 let isRetracted = false
+let lastWindowBounds: Electron.Rectangle | null = null
 const WINDOW_WIDTH = 360
 const RETRACTED_WIDTH = 20
 
@@ -431,16 +529,20 @@ const RETRACTED_WIDTH = 20
 function retractWindow() {
     if (!win || isRetracted) return
 
+    // Store current bounds before retracting
+    lastWindowBounds = win.getBounds()
+
     const primaryDisplay = screen.getPrimaryDisplay()
     const { width: screenWidth, height: screenHeight } = primaryDisplay.workAreaSize
 
     win.setBounds({
         x: screenWidth - RETRACTED_WIDTH,
-        y: Math.floor((screenHeight - 520) / 2),
+        y: lastWindowBounds.y, // Keep the same vertical position
         width: WINDOW_WIDTH,
-        height: 520
+        height: lastWindowBounds.height // Keep the same height
     }, true)
 
+    win.setResizable(false) // Disable resizing when retracted
     isRetracted = true
     win.webContents.send('tray-state-changed', true)
 }
@@ -449,16 +551,22 @@ function retractWindow() {
 function expandWindow() {
     if (!win || !isRetracted) return
 
-    const primaryDisplay = screen.getPrimaryDisplay()
-    const { width: screenWidth, height: screenHeight } = primaryDisplay.workAreaSize
+    if (lastWindowBounds) {
+        // Restore to previous position and size
+        win.setBounds(lastWindowBounds, true)
+    } else {
+        // Fallback if no previous bounds stored
+        const primaryDisplay = screen.getPrimaryDisplay()
+        const { width: screenWidth, height: screenHeight } = primaryDisplay.workAreaSize
+        win.setBounds({
+            x: screenWidth - WINDOW_WIDTH - 20,
+            y: Math.floor((screenHeight - 520) / 2),
+            width: WINDOW_WIDTH,
+            height: 520
+        }, true)
+    }
 
-    win.setBounds({
-        x: screenWidth - WINDOW_WIDTH - 20,
-        y: Math.floor((screenHeight - 520) / 2),
-        width: WINDOW_WIDTH,
-        height: 520
-    }, true)
-
+    win.setResizable(true) // Re-enable resizing when expanded
     isRetracted = false
     win.webContents.send('tray-state-changed', false)
 }
@@ -484,33 +592,55 @@ app.on('activate', () => {
     }
 })
 
-app.whenReady().then(() => {
-    createWindow()
+// Hotkey management
+let currentHotkeys: Record<string, string> = {
+    increment: 'numadd',
+    decrement: 'numsub',
+    stats: 'Alt+Shift+S',
+    tray: 'Alt+Shift+G',
+    overlay: 'Alt+Shift+H'
+}
 
-    // Registrar atalhos globais (funcionam mesmo quando o app não está em foco)
-    // ATENÇÃO: Esses atalhos funcionam GLOBALMENTE no sistema!
+function registerGlobalHotkeys(customHotkeys?: Record<string, string>) {
+    // Unregister all first to avoid conflicts
+    globalShortcut.unregisterAll()
 
-    // Alt+Shift+= para incrementar (+1)
-    globalShortcut.register('Alt+Shift+=', () => {
-        console.log('Global hotkey: +1 kill')
+    if (customHotkeys) {
+        currentHotkeys = { ...currentHotkeys, ...customHotkeys }
+    }
+
+    // Helper to register with logging
+    const register = (key: string, accelerator: string, callback: () => void) => {
+        if (!accelerator) return
+        try {
+            const success = globalShortcut.register(accelerator, callback)
+            if (success) {
+                console.log(`✅ Registered hotkey: ${key} -> ${accelerator}`)
+                win?.webContents.send('hotkey-status', { key, accelerator, success: true })
+            } else {
+                console.error(`❌ Failed to register hotkey: ${key} -> ${accelerator} (Already in use?)`)
+                win?.webContents.send('hotkey-status', { key, accelerator, success: false, error: 'Already in use' })
+            }
+        } catch (err: any) {
+            console.error(`❌ Error registering hotkey ${key}:`, err)
+            win?.webContents.send('hotkey-status', { key, accelerator, success: false, error: err.message })
+        }
+    }
+
+    // Register each action
+    register('increment', currentHotkeys.increment, () => {
         win?.webContents.send('hotkey-increment')
     })
 
-    // Alt+Shift+- para decrementar (-1)
-    globalShortcut.register('Alt+Shift+-', () => {
-        console.log('Global hotkey: -1 kill')
+    register('decrement', currentHotkeys.decrement, () => {
         win?.webContents.send('hotkey-decrement')
     })
 
-    // Alt+Shift+S para abrir estatísticas
-    globalShortcut.register('Alt+Shift+S', () => {
-        console.log('Global hotkey: Open stats')
+    register('stats', currentHotkeys.stats, () => {
         win?.webContents.send('hotkey-stats')
     })
 
-    // Alt+Shift+G para expandir bandeja se estiver retraída
-    globalShortcut.register('Alt+Shift+G', () => {
-        console.log('Global hotkey: Toggle tray')
+    register('tray', currentHotkeys.tray, () => {
         if (win) {
             if (win.isMinimized()) win.restore()
             win.focus()
@@ -518,16 +648,61 @@ app.whenReady().then(() => {
         }
     })
 
-    // Alt+Shift+H para Toggle HUD (Overlay)
-    globalShortcut.register('Alt+Shift+H', () => {
-        console.log('Global hotkey: Toggle HUD')
-        // Lógica de toggle direto aqui
-        if (overlayWin) {
-            closeOverlay()
-        } else {
-            createOverlayWindow()
-        }
+    register('overlay', currentHotkeys.overlay, () => {
+        if (overlayWin) closeOverlay()
+        else createOverlayWindow()
     })
+}
+
+app.whenReady().then(() => {
+    createWindow()
+    registerGlobalHotkeys()
+
+    // IPC to update hotkeys from settings
+    ipcMain.on('update-hotkeys', (_event, newHotkeys) => {
+        console.log('🔄 Updating global hotkeys:', newHotkeys)
+        registerGlobalHotkeys(newHotkeys)
+    })
+
+    // Tray Dragging Logic
+    let trayDragInterval: NodeJS.Timeout | null = null;
+    ipcMain.on('tray-drag-start', (_event, offsetTop) => {
+        if (trayDragInterval) clearInterval(trayDragInterval);
+
+        trayDragInterval = setInterval(() => {
+            if (!win || !isRetracted) {
+                if (trayDragInterval) clearInterval(trayDragInterval);
+                return;
+            }
+            const cursorPos = screen.getCursorScreenPoint();
+            const primaryDisplay = screen.getDisplayMatching(win.getBounds());
+            const { width: screenWidth, height: screenHeight, y: screenY } = primaryDisplay.workArea;
+
+            let newY = cursorPos.y - offsetTop;
+
+            // Clamp to screen work area
+            const bounds = win.getBounds();
+            newY = Math.max(screenY, Math.min(newY, screenY + screenHeight - bounds.height));
+
+            win.setBounds({
+                x: screenWidth - RETRACTED_WIDTH,
+                y: newY,
+                width: WINDOW_WIDTH,
+                height: bounds.height
+            });
+
+            // Do NOT update lastWindowBounds here.
+            // We want the window to expand back to its ORIGINAL position,
+            // not where the tray was dragged to.
+        }, 16); // ~60fps
+    });
+
+    ipcMain.on('tray-drag-stop', () => {
+        if (trayDragInterval) {
+            clearInterval(trayDragInterval);
+            trayDragInterval = null;
+        }
+    });
 
     // Check for updates
     if (app.isPackaged) {

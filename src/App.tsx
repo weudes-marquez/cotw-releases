@@ -5,6 +5,7 @@ import { Overlay } from './components/Overlay';
 import { UserGuide } from './components/UserGuide';
 import { NeedZonesPanel } from './components/NeedZonesPanel';
 import { DetailedStats } from './components/DetailedStats';
+import { HotkeySettings } from './components/HotkeySettings';
 import { useEffect, useState } from 'react';
 import { auth } from './firebase';
 import { onAuthStateChanged } from 'firebase/auth';
@@ -30,17 +31,29 @@ function App() {
       <div style={{
         width: '100%',
         height: '100vh',
-        backgroundColor: isTransparent ? 'transparent' : '#111827',
+        backgroundColor: isTransparent ? 'transparent' : '#1c1917', // stone-900
         display: 'flex',
+        flexDirection: 'column',
         alignItems: 'center',
         justifyContent: 'center',
-        color: isTransparent ? 'transparent' : 'white',
-        fontSize: '24px',
+        color: isTransparent ? 'transparent' : '#a8a29e', // stone-400
+        fontSize: '14px',
+        fontWeight: 'bold',
+        textTransform: 'uppercase',
+        letterSpacing: '0.1em',
         margin: 0,
         padding: 0,
-        overflow: 'hidden'
+        overflow: 'hidden',
+        fontFamily: 'Inter, system-ui, sans-serif'
       }}>
-        {!isTransparent && 'Loading authentication...'}
+        {!isTransparent && (
+          <>
+            <div className="animate-pulse mb-4">
+              <i className="fa-solid fa-circle-notch fa-spin text-hunter-orange text-2xl"></i>
+            </div>
+            Autenticando...
+          </>
+        )}
       </div>
     );
   }
@@ -54,6 +67,7 @@ function App() {
         <Route path="/guide" element={<UserGuide />} />
         <Route path="/need-zones/:position" element={<NeedZonesPanel show={true} onClose={() => window.close()} />} />
         <Route path="/detailed-stats" element={<DetailedStats />} />
+        <Route path="/hotkeys" element={<HotkeySettings />} />
         <Route path="/" element={<Navigate to={user ? "/dashboard" : "/login"} />} />
       </Routes>
     </HashRouter>

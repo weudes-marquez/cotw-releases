@@ -117,6 +117,8 @@ export const Login = () => {
 
     return (
         <div className="h-screen w-full overflow-hidden bg-stone-dark text-gray-100 font-sans relative flex items-center justify-center p-4">
+            {/* Window Drag Handle */}
+            <div className="absolute top-0 left-0 w-full h-10 z-40 drag-region" />
             {/* Background Layers */}
             {/* Background Layers */}
             <div className="absolute inset-0 w-full h-full overflow-hidden z-0 pointer-events-none">
@@ -147,7 +149,7 @@ export const Login = () => {
             {/* Close Button - Top Right */}
             <button
                 onClick={() => window.close()}
-                className="absolute top-4 right-4 z-50 w-8 h-8 rounded-full bg-red-600/80 hover:bg-red-500 text-white  flex items-center justify-center shadow-lg hover:shadow-red-500/50 active:scale-95"
+                className="absolute top-4 right-4 z-50 w-8 h-8 rounded-full bg-red-600/80 hover:bg-red-500 text-white  flex items-center justify-center shadow-lg hover:shadow-red-500/50 active:scale-95 no-drag"
                 title="Fechar aplicativo"
             >
                 <i className="fa-solid fa-xmark text-lg"></i>
@@ -167,18 +169,15 @@ export const Login = () => {
                         </li>
                         <li className="flex gap-2">
                             <i className="fa-solid fa-gamepad text-yellow-500 mt-0.5 shrink-0"></i>
-                            <span><strong>No jogo:</strong> Pressione <kbd className="px-1 py-0.5 bg-stone-800 border border-stone-600 rounded text-[9px] font-mono">ALT + Enter</kbd> para ativar modo janela sem borda.</span>
+                            <span><strong>No jogo:</strong> Pressione <kbd className="px-1 py-0.5 bg-stone-800 border border-stone-600 rounded text-[9px] font-mono">ALT + Enter</kbd> para alternar (ativar/desativar) o modo janela sem borda.</span>
                         </li>
                     </ul>
                 </div>
 
                 {/* Login Card */}
-                <div className="w-full bg-stone-900/80 backdrop-blur-sm border border-white/10 p-5 shadow-2xl rounded-sm relative overflow-hidden group">
+                <div className="w-full bg-stone-900/80 backdrop-blur-sm border border-white/10 p-5 shadow-2xl rounded-sm relative overflow-hidden group no-drag">
                     {/* Decorative Top Line (Hunter Orange) */}
                     <div className="absolute top-0 left-0 w-full h-1 bg-hunter-orange shadow-[0_0_10px_rgba(217,93,30,0.5)]"></div>
-
-                    {/* Window Drag Handle */}
-                    <div className="absolute top-0 left-0 w-full h-8 z-50 drag-region" />
 
                     {/* Header */}
                     <div className="mb-3 space-y-1">
@@ -303,7 +302,7 @@ export const Login = () => {
                 </div>
 
                 {/* Guide Button - Below Login Container */}
-                <div className="mt-6 flex justify-center z-10 relative">
+                <div className="mt-6 flex justify-center z-10 relative no-drag">
                     <button
                         onClick={() => {
                             (window as any).ipcRenderer.send('open-user-guide');

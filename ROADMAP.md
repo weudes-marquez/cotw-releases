@@ -14,10 +14,19 @@ Este documento descreve as funcionalidades planejadas e melhorias futuras para o
 ### 🖥️ Interface e Overlay
 - [ ] **Controle de Opacidade**: Permitir que o usuário defina o nível de transparência das camadas de estatísticas e overlays para melhor integração com o jogo.
 - [ ] **Customização de Layout**: Permitir que o usuário arraste e redimensione os elementos do HUD do Overlay.
+- [ ] **Guia de Pelagens Raras**: Criar tela de consulta de pelagens raras e suas probabilidades de spawn, utilizando a base de dados integrada.
+
+### 🧠 Inteligência de Dados & Comunidade
+- [ ] **Estatísticas Preditivas (Heurística)**: Implementar algoritmo heurístico que analisa o histórico de abates (respawns, tendências) para calcular e exibir a probabilidade estimada de spawn de um animal Raro, Diamante ou Great One em tempo real.
+- [ ] **Estatísticas Globais (Community Repo)**: Criar um repositório centralizado de dados anônimos de todos os usuários para gerar médias globais (ex: "Quantos abates em média para um Great One?"). Exibir essas métricas comparativas dentro do app e disponibilizá-las publicamente na web.
 
 ### ⚙️ Funcionalidades de Sistema
 - [ ] **Melhoria nos Atalhos Globais**: Expandir a biblioteca de hotkeys para controlar todas as novas camadas de overlay.
 - [ ] **Sincronização Avançada**: Otimizar ainda mais a comunicação com o Supabase para garantir latência zero nos overlays.
+
+### 📱 Expansão Mobile (Pós-Windows)
+- [ ] **Versão Android**: Desenvolver aplicativo nativo ou híbrido para acompanhamento do grind via celular.
+- [ ] **Versão iOS**: Lançamento na App Store para usuários de iPhone/iPad.
 
 ---
 

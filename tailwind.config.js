@@ -9,6 +9,7 @@ export default {
             colors: {
                 'hunter-orange': '#ff6b35',
                 'stone-dark': '#1c1917', // stone-900
+                'go-gold': '#FBBF24', // Amber-400
             },
             fontFamily: {
                 sans: ['"Nunito Sans"', 'sans-serif'],

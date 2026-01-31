@@ -33,7 +33,6 @@ class SyncManager {
                         animal_id: session.animal_id,
                         animal_name: session.animal_name,
                         start_date: session.start_date,
-                        start_date: session.start_date,
                         is_active: session.is_active,
                         // Removido total_kills e current_session_kills para evitar conflito com triggers do servidor
                         updated_at: new Date().toISOString()

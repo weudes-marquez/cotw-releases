@@ -457,12 +457,15 @@ export async function getActiveSessions(userId: string) {
     const { data: sessions } = await supabase.from('grind_sessions').select('*').eq('user_id', supabaseId).eq('is_active', true).order('start_date', { ascending: false });
     if (!sessions) return [];
     const { data: stats } = await supabase.from('session_statistics').select('*').in('session_id', sessions.map(s => s.id));
+    const { data: rareKills } = await supabase.from('kill_records').select('session_id, fur_type_name').in('session_id', sessions.map(s => s.id)).not('fur_type_id', 'is', null);
+
     return sessions.map(s => ({
         ...s,
         session_id: s.id,
         total_diamonds: stats?.find(st => st.session_id === s.id)?.total_diamonds || 0,
         total_great_ones: stats?.find(st => st.session_id === s.id)?.total_great_ones || 0,
-        total_rare_furs: stats?.find(st => st.session_id === s.id)?.total_rare_furs || 0
+        total_rare_furs: stats?.find(st => st.session_id === s.id)?.total_rare_furs || 0,
+        rare_furs: rareKills?.filter(rk => rk.session_id === s.id).map(rk => rk.fur_type_name) || []
     }));
 }
 
@@ -500,7 +503,8 @@ export async function getSpecies() {
 export async function getUserHistoricalStats(userId: string) {
     const supabaseId = getSupabaseUserId(userId);
     const { data: sessions } = await supabase.from('grind_sessions').select('*, session_statistics(*)').eq('user_id', supabaseId);
-    const { data: superRares } = await supabase.from('kill_records').select('*').eq('user_id', supabaseId).eq('is_diamond', true).not('fur_type_id', 'is', null);
+    // Buscar TODOS os abates que possuem pelagem (Raros e Super Raros)
+    const { data: allRares } = await supabase.from('kill_records').select('*').eq('user_id', supabaseId).not('fur_type_id', 'is', null);
 
     const statsMap: Record<string, any> = {};
     sessions?.forEach(s => {
@@ -528,10 +532,25 @@ export async function getUserHistoricalStats(userId: string) {
         if (new Date(s.start_date) > new Date(entry.last_session_date)) entry.last_session_date = s.start_date;
         if (s.is_active) entry.has_active_session = true;
     });
-    superRares?.forEach(sr => {
+
+    allRares?.forEach(sr => {
         if (statsMap[sr.animal_id]) {
-            statsMap[sr.animal_id].super_rares++;
-            statsMap[sr.animal_id].super_rare_list.push({ fur_type: sr.fur_type_name, date: sr.killed_at, score: sr.trophy_score });
+            const entry = statsMap[sr.animal_id];
+            if (sr.is_diamond) {
+                // É um Super Raro
+                entry.super_rares++;
+                entry.super_rare_list.push({
+                    fur_type: sr.fur_type_name,
+                    date: sr.killed_at,
+                    score: sr.trophy_score
+                });
+            } else {
+                // É um Raro comum
+                if (!entry.rare_types) entry.rare_types = [];
+                if (sr.fur_type_name && !entry.rare_types.includes(sr.fur_type_name)) {
+                    entry.rare_types.push(sr.fur_type_name);
+                }
+            }
         }
     });
     return Object.values(statsMap).sort((a: any, b: any) => b.total_kills - a.total_kills);

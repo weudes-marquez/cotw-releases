@@ -17,16 +17,18 @@ export class CotwLocalDB extends Dexie {
     grind_sessions!: Table<LocalGrindSession>;
     kill_records!: Table<LocalKillRecord>;
     session_statistics!: Table<SessionStatistics>; // Cache das estatísticas calculadas pelo Supabase
+    settings!: Table<{ key: string, value: any }>;
 
     constructor() {
         super('CotwGrindTrackerDB');
 
         // Definimos o esquema das tabelas
         // O Dexie usa uma sintaxe simplificada: '++id' para auto-incremento, 'coluna' para indexar
-        this.version(1).stores({
+        this.version(2).stores({
             grind_sessions: 'id, user_id, animal_id, is_active, sync_status',
             kill_records: 'id, session_id, user_id, animal_id, sync_status, killed_at',
-            session_statistics: 'session_id'
+            session_statistics: 'session_id',
+            settings: 'key'
         });
     }
 }

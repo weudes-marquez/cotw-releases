@@ -9,6 +9,7 @@ import { HamburgerMenu, AboutModal, useFontSizeControl, ConfirmationModal } from
 import { NeedZonesModal } from './NeedZonesModal';
 import { NeedZonesPanel } from './NeedZonesPanel';
 import { MigrationModal } from './MigrationModal';
+import { db } from '../db_local';
 
 interface Animal {
     id: string; // UUID from Supabase
@@ -64,6 +65,14 @@ export const Dashboard = () => {
     const [showGrandTotal, setShowGrandTotal] = useState(false);
     const [showCurrentSession, setShowCurrentSession] = useState(false);
     const [activeSessions, setActiveSessions] = useState<any[]>([]);
+    const [hotkeys, setHotkeys] = useState<Record<string, string>>({
+        increment: 'numadd',
+        decrement: 'numsub',
+        stats: 'Alt+Shift+S',
+        tray: 'Alt+Shift+G',
+        overlay: 'Alt+Shift+H'
+    });
+    const [showHotkeysModal, setShowHotkeysModal] = useState(false);
     const [isCooldown, setIsCooldown] = useState(false);
 
     const [showMenu, setShowMenu] = useState(false);
@@ -293,27 +302,40 @@ export const Dashboard = () => {
     };
 
     useEffect(() => {
+        const loadSettings = async () => {
+            try {
+                const savedHotkeys = await db.settings.toArray();
+                if (savedHotkeys.length > 0) {
+                    const hotkeyMap: Record<string, string> = {};
+                    savedHotkeys.forEach(s => {
+                        if (s.key.startsWith('hotkey_')) {
+                            hotkeyMap[s.key.replace('hotkey_', '')] = s.value;
+                        }
+                    });
+                    if (Object.keys(hotkeyMap).length > 0) {
+                        setHotkeys(prev => ({ ...prev, ...hotkeyMap }));
+                        window.ipcRenderer.send('update-hotkeys', hotkeyMap);
+                    }
+                }
+            } catch (err) {
+                console.error('❌ Error loading hotkeys:', err);
+            }
+        };
+
         const fetchAnimals = async () => {
             try {
-
                 const data = await getSpecies();
-
                 const animalList: Animal[] = (data || []).map((a: any) => ({
                     id: a.id,
                     name_enus: a.name_enus,
                     name_ptbr: a.name_ptbr
                 }));
 
-                // Remove duplicates by Portuguese name
                 const uniqueAnimals = animalList.filter((animal, index, self) =>
                     index === self.findIndex((a) => a.name_ptbr === animal.name_ptbr)
                 );
 
-
-
-
                 setAnimals(uniqueAnimals);
-                // Don't auto-select first animal - user should choose
             } catch (error) {
                 console.error('❌ Error fetching animals:', error);
             } finally {
@@ -321,6 +343,7 @@ export const Dashboard = () => {
             }
         };
 
+        loadSettings();
         fetchAnimals();
     }, []);
 
@@ -574,14 +597,35 @@ export const Dashboard = () => {
             (window as any).__hotkeyToggleStats?.();
         };
 
+        const handleTray = () => {
+            console.log('📨 IPC RECEIVED: hotkey-tray');
+            (window as any).__hotkeyToggleTray?.();
+        };
+
+        const handleOverlay = () => {
+            console.log('📨 IPC RECEIVED: hotkey-overlay');
+            (window as any).__hotkeyToggleOverlay?.();
+        };
+
         // IMPORTANT: Use 'once' instead of 'on' to prevent duplicate calls
         window.ipcRenderer.removeAllListeners('hotkey-increment');
         window.ipcRenderer.removeAllListeners('hotkey-decrement');
         window.ipcRenderer.removeAllListeners('hotkey-stats');
+        window.ipcRenderer.removeAllListeners('hotkey-tray');
+        window.ipcRenderer.removeAllListeners('hotkey-overlay');
 
         window.ipcRenderer.on('hotkey-increment', handleIncrement);
         window.ipcRenderer.on('hotkey-decrement', handleDecrement);
         window.ipcRenderer.on('hotkey-stats', handleStats);
+        window.ipcRenderer.on('hotkey-tray', handleTray);
+        window.ipcRenderer.on('hotkey-overlay', handleOverlay);
+
+        window.ipcRenderer.on('hotkey-status', (_event, status) => {
+            console.log('⌨️ Hotkey Status:', status);
+            if (!status.success) {
+                console.error(`❌ Hotkey failed: ${status.key} (${status.accelerator}) - ${status.error}`);
+            }
+        });
 
         console.log('✅ IPC listeners registered');
 
@@ -590,18 +634,24 @@ export const Dashboard = () => {
             window.ipcRenderer.off('hotkey-increment', handleIncrement);
             window.ipcRenderer.off('hotkey-decrement', handleDecrement);
             window.ipcRenderer.off('hotkey-stats', handleStats);
+            window.ipcRenderer.off('hotkey-tray', handleTray);
+            window.ipcRenderer.off('hotkey-overlay', handleOverlay);
         };
     }, []); // EMPTY DEPS - register only once
 
     // Use refs to always have the latest functions without recreating window handlers
     const updateCounterRef = useRef(updateCounter);
     const handleToggleStatsRef = useRef(handleToggleStats);
+    const toggleTrayRef = useRef(toggleTray);
+    const toggleOverlayRef = useRef(() => window.ipcRenderer.invoke('toggle-overlay'));
+
 
     // Keep refs updated
     useEffect(() => {
         updateCounterRef.current = updateCounter;
         handleToggleStatsRef.current = handleToggleStats;
-    }, [updateCounter, handleToggleStats]);
+        toggleTrayRef.current = toggleTray;
+    }, [updateCounter, handleToggleStats, toggleTray]);
 
     // Expose stable handlers to window for hotkeys (only set once)
     useEffect(() => {
@@ -615,7 +665,14 @@ export const Dashboard = () => {
             updateCounterRef.current(-1);
         };
         (window as any).__hotkeyToggleStats = () => handleToggleStatsRef.current();
+        (window as any).__hotkeyToggleTray = () => toggleTrayRef.current();
+        (window as any).__hotkeyToggleOverlay = () => toggleOverlayRef.current();
     }, []); // ONLY ONCE - handlers use refs to always get latest functions
+
+    // Hotkey saving logic
+    const applyHotkeys = async () => {
+        // This is now handled in the separate HotkeySettings window
+    };
 
     // Great One Celebration
     const triggerGreatOneCelebration = () => {
@@ -651,9 +708,38 @@ export const Dashboard = () => {
             {/* Clickable Border When Retracted */}
             {isRetracted && (
                 <div
-                    className="absolute left-0 top-0 w-6 h-full cursor-pointer z-[100] group"
-                    onClick={toggleTray}
-                    title="Clique para expandir (Alt+Shift+G)"
+                    className="absolute left-0 top-0 w-6 h-full cursor-default z-[100] group"
+                    onMouseDown={(e) => {
+                        if (!isRetracted) return;
+
+                        const startTime = Date.now();
+                        const startY = e.screenY;
+                        const offsetTop = e.clientY;
+                        let hasMoved = false;
+
+                        window.ipcRenderer.send('tray-drag-start', offsetTop);
+
+                        const onMouseMove = (moveEvent: MouseEvent) => {
+                            if (Math.abs(moveEvent.screenY - startY) > 3) {
+                                hasMoved = true;
+                            }
+                        };
+
+                        const onMouseUp = () => {
+                            window.ipcRenderer.send('tray-drag-stop');
+                            window.removeEventListener('mousemove', onMouseMove);
+                            window.removeEventListener('mouseup', onMouseUp);
+
+                            // ONLY toggle tray if the mouse didn't move (it was a click)
+                            if (!hasMoved) {
+                                toggleTray();
+                            }
+                        };
+
+                        window.addEventListener('mousemove', onMouseMove);
+                        window.addEventListener('mouseup', onMouseUp);
+                    }}
+                    title="Arraste para mover ou clique para expandir"
                 >
                     <div className="absolute left-0 top-0 w-1 h-full bg-hunter-orange/80 group-hover:bg-hunter-orange group-hover:w-1.5  shadow-[0_0_10px_rgba(217,93,30,0.8)]" />
                 </div>
@@ -709,10 +795,19 @@ export const Dashboard = () => {
                             {/* Overlay Button */}
                             <button
                                 onClick={() => window.ipcRenderer.invoke('toggle-overlay')}
-                                title="Toggle Overlay HUD (Alt+Shift+H)"
+                                title={`Toggle Overlay HUD (${hotkeys.overlay})`}
                                 className="w-6 h-6 rounded-full bg-cyan-600/80 border border-cyan-500/50 text-white hover:bg-cyan-700 flex items-center justify-center"
                             >
                                 <i className="fa-solid fa-layer-group text-xs"></i>
+                            </button>
+
+                            {/* Hotkeys Button */}
+                            <button
+                                onClick={() => window.ipcRenderer.send('open-hotkey-settings')}
+                                title="Configurar Atalhos"
+                                className="w-6 h-6 rounded-full bg-stone-800 border border-stone-700 text-stone-400 hover:text-white hover:bg-stone-700 flex items-center justify-center"
+                            >
+                                <i className="fa-solid fa-keyboard text-xs"></i>
                             </button>
 
                             {/* Botão de Toggle Bandeja */}
@@ -772,6 +867,8 @@ export const Dashboard = () => {
                                         )}
                                     </div>
                                 </div>
+
+                                {/* Hotkeys Modal removed - now opens in new window */}
                                 {/* Custom Dropdown */}
                                 <div className="relative">
                                     <button
@@ -1104,7 +1201,7 @@ export const Dashboard = () => {
 
                         {/* STATS MODAL */}
                         {showStats && (
-                            <div className="absolute inset-0 z-50 bg-stone-950/95 backdrop-blur-md flex flex-col">
+                            <div className="absolute top-8 bottom-0 left-0 right-0 z-50 bg-stone-950/95 backdrop-blur-md flex flex-col animate-in slide-in-from-bottom-2 duration-200">
                                 <div className="p-2 border-b border-white/10 flex justify-between items-center bg-stone-900 shadow-lg">
                                     <div className="flex items-center gap-4">
                                         <h3 className="font-serif text-white uppercase tracking-wider text-xs">
@@ -1298,6 +1395,14 @@ export const Dashboard = () => {
                                                                             </div>
                                                                         )}
                                                                     </div>
+
+                                                                    {/* Rare fur types in active session */}
+                                                                    {activeSession.rare_furs && activeSession.rare_furs.length > 0 && (
+                                                                        <div className="mt-2 bg-stone-950/30 p-1.5 rounded border border-purple-500/10">
+                                                                            <span className="text-purple-400 block text-[8px] mb-1 font-bold uppercase">Pelagens Raras</span>
+                                                                            <span className="text-purple-300 text-[9px]">{activeSession.rare_furs.join(', ')}</span>
+                                                                        </div>
+                                                                    )}
                                                                 </div>
                                                             )}
                                                         </div>
@@ -1411,9 +1516,17 @@ export const Dashboard = () => {
 
                                                                     {/* Rare fur types */}
                                                                     {animalStat.rare_types && animalStat.rare_types.length > 0 && (
-                                                                        <div className="bg-stone-950/50 p-1.5 rounded mt-2">
-                                                                            <span className="text-stone-500 block text-[8px] mb-1">Pelagens Raras</span>
-                                                                            <span className="text-purple-300 text-[9px]">{animalStat.rare_types.join(', ')}</span>
+                                                                        <div className="bg-stone-950/50 p-1.5 rounded mt-2 border border-purple-500/10">
+                                                                            <span className="text-purple-400 block text-[8px] mb-1 font-bold uppercase tracking-wider">
+                                                                                <i className="fa-solid fa-star mr-1"></i> Pelagens Raras
+                                                                            </span>
+                                                                            <div className="flex flex-wrap gap-1">
+                                                                                {animalStat.rare_types.map((type: string, idx: number) => (
+                                                                                    <span key={idx} className="bg-purple-500/10 text-purple-300 text-[9px] px-1.5 py-0.5 rounded border border-purple-500/20">
+                                                                                        {type}
+                                                                                    </span>
+                                                                                ))}
+                                                                            </div>
                                                                         </div>
                                                                     )}
 

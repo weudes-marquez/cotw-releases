@@ -35,19 +35,14 @@
     "directories": {
       "output": "release"
     },
+    "icon": "build/icon.ico",
     "files": [
       "dist/**/*",
       "dist-electron/**/*",
-      "build/icon.ico",
-      "!app-firebase/**/*"
-    ],
-    "extraResources": [
-      "public/**/*",
       "build/icon.ico"
     ],
     "win": {
       "icon": "build/icon.ico",
-      "forceCodeSigning": false,
       "target": [
         {
           "target": "nsis",
@@ -62,6 +57,16 @@
           ]
         }
       ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "installerIcon": "build/icon.ico",
+      "uninstallerIcon": "build/icon.ico",
+      "installerHeaderIcon": "build/icon.ico",
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "COTW Grind Counter"
     }
   },
   "description": "A grind counter for theHunter: Call of the Wild",
