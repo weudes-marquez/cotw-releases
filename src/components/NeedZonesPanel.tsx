@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import { getNeedZones, getMaps, getSpecies } from '../supabase_integration';
 import { ZoneTimeline } from './ZoneTimeline';
 import { ZoneClock } from './ZoneClock';
@@ -40,6 +40,15 @@ export function NeedZonesPanel({ show, onClose }: NeedZonesPanelProps) {
     const [searchTerm, setSearchTerm] = useState('');
     const [selectedMapId, setSelectedMapId] = useState<string>('');
     const [showScheduleList, setShowScheduleList] = useState(false);
+    const searchInputRef = useRef<HTMLInputElement>(null);
+
+    useEffect(() => {
+        if (show) {
+            setTimeout(() => {
+                searchInputRef.current?.focus();
+            }, 100);
+        }
+    }, [show]);
 
     useEffect(() => {
         const savedView = localStorage.getItem('needZonesViewMode');
@@ -187,6 +196,7 @@ export function NeedZonesPanel({ show, onClose }: NeedZonesPanelProps) {
                             <i className="fa-solid fa-search text-[9px]"></i>
                         </div>
                         <input
+                            ref={searchInputRef}
                             type="text"
                             value={searchTerm}
                             onChange={(e) => setSearchTerm(e.target.value)}

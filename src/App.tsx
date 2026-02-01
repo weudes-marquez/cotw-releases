@@ -5,7 +5,7 @@ import { Overlay } from './components/Overlay';
 import { UserGuide } from './components/UserGuide';
 import { NeedZonesPanel } from './components/NeedZonesPanel';
 import { DetailedStats } from './components/DetailedStats';
-import { HotkeySettings } from './components/HotkeySettings';
+import { GeneralSettings } from './components/GeneralSettings';
 import { useEffect, useState } from 'react';
 import { auth } from './firebase';
 import { onAuthStateChanged } from 'firebase/auth';
@@ -67,7 +67,7 @@ function App() {
         <Route path="/guide" element={<UserGuide />} />
         <Route path="/need-zones/:position" element={<NeedZonesPanel show={true} onClose={() => window.close()} />} />
         <Route path="/detailed-stats" element={<DetailedStats />} />
-        <Route path="/hotkeys" element={<HotkeySettings />} />
+        <Route path="/settings" element={<GeneralSettings />} />
         <Route path="/" element={<Navigate to={user ? "/dashboard" : "/login"} />} />
       </Routes>
     </HashRouter>

@@ -68,9 +68,14 @@ interface HamburgerMenuProps {
     onShowMigration: () => void;
     showDetailedMode: boolean;
     onToggleDetailedMode: (enabled: boolean) => void;
+    onResetWindows: () => void;
+    hudEditable: boolean;
+    onToggleHudEdit: (enabled: boolean) => void;
+    hudScale: number;
+    onHudScaleChange: (scale: number) => void;
 }
 
-export function HamburgerMenu({ show, onClose, fontSize, onFontSizeChange, onResetStats, onShowAbout, onShowGuide, onShowMigration, showDetailedMode, onToggleDetailedMode }: HamburgerMenuProps) {
+export function HamburgerMenu({ show, onClose, fontSize, onFontSizeChange, onResetStats, onShowAbout, onShowGuide, onShowMigration, showDetailedMode, onToggleDetailedMode, onResetWindows, hudEditable, onToggleHudEdit, hudScale, onHudScaleChange }: HamburgerMenuProps) {
     if (!show) return null;
 
     return (
@@ -140,12 +145,55 @@ export function HamburgerMenu({ show, onClose, fontSize, onFontSizeChange, onRes
                         Guia de Uso
                     </button>
 
+                    <div className="border-t border-stone-800 pt-4 mt-2">
+                        <h4 className="text-hunter-orange uppercase text-[10px] font-bold mb-3 tracking-widest">Ajustes da HUD (Overlay)</h4>
+
+                        <label className="flex items-center justify-between cursor-pointer group mb-4">
+                            <span className="text-stone-300 text-sm flex items-center gap-2 group-hover:text-white">
+                                <i className="fa-solid fa-up-down-left-right text-hunter-orange"></i>
+                                Modo de Edição (Arraste)
+                            </span>
+                            <div className="relative">
+                                <input
+                                    type="checkbox"
+                                    className="sr-only peer"
+                                    checked={hudEditable}
+                                    onChange={(e) => onToggleHudEdit(e.target.checked)}
+                                />
+                                <div className="w-9 h-5 bg-stone-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-hunter-orange"></div>
+                            </div>
+                        </label>
+
+                        <div className="mb-4">
+                            <label className="text-stone-400 text-[10px] uppercase block mb-2">
+                                Escala da HUD: {hudScale.toFixed(1)}x
+                            </label>
+                            <input
+                                type="range"
+                                min="0.5"
+                                max="2.0"
+                                step="0.1"
+                                value={hudScale}
+                                onChange={(e) => onHudScaleChange(parseFloat(e.target.value))}
+                                className="w-full accent-hunter-orange"
+                            />
+                        </div>
+                    </div>
+
                     <button
                         onClick={onResetStats}
                         className="w-full text-left px-3 py-2 bg-stone-800 hover:bg-red-900/30 text-stone-300 hover:text-red-400 rounded-sm  text-sm flex items-center gap-2"
                     >
                         <i className="fa-solid fa-trash"></i>
                         Resetar Estatísticas
+                    </button>
+
+                    <button
+                        onClick={onResetWindows}
+                        className="w-full text-left px-3 py-2 bg-stone-800 hover:bg-blue-900/30 text-stone-300 hover:text-blue-400 rounded-sm  text-sm flex items-center gap-2"
+                    >
+                        <i className="fa-solid fa-arrows-to-dot"></i>
+                        Restaurar Posição das Janelas
                     </button>
 
                     <button

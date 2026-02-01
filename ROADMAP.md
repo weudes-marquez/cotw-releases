@@ -22,6 +22,7 @@ Este documento descreve as funcionalidades planejadas e melhorias futuras para o
 
 ### ⚙️ Funcionalidades de Sistema
 - [ ] **Melhoria nos Atalhos Globais**: Expandir a biblioteca de hotkeys para controlar todas as novas camadas de overlay.
+- [ ] **Atalhos Rápidos de Abate**: Implementar atalhos dedicados para registrar abates específicos (ex: Alt+D para Diamante, Alt+T para Troll, Alt+G para Great One) sem precisar abrir o menu de seleção.
 - [ ] **Sincronização Avançada**: Otimizar ainda mais a comunicação com o Supabase para garantir latência zero nos overlays.
 
 ### 📱 Expansão Mobile (Pós-Windows)

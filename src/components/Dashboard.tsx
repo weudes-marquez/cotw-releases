@@ -57,6 +57,10 @@ export const Dashboard = () => {
         difficultyLevel: string;
     }>({ weight: '', trophyScore: '', difficultyLevel: '' });
 
+    // HUD Settings State
+    const [hudEditable, setHudEditable] = useState(false);
+    const [hudScale, setHudScale] = useState(1.0);
+
     const [isAnimalDropdownOpen, setIsAnimalDropdownOpen] = useState(false);
     const [furTypeSearch, setFurTypeSearch] = useState('');
     const [selectedAnimalForStats, setSelectedAnimalForStats] = useState<string | null>(null);
@@ -70,7 +74,9 @@ export const Dashboard = () => {
         decrement: 'numsub',
         stats: 'Alt+Shift+S',
         tray: 'Alt+Shift+G',
-        overlay: 'Alt+Shift+H'
+        overlay: 'Alt+Shift+H',
+        detailedStats: 'Alt+Shift+]',
+        needZones: 'Alt+Shift+['
     });
     const [showHotkeysModal, setShowHotkeysModal] = useState(false);
     const [isCooldown, setIsCooldown] = useState(false);
@@ -182,6 +188,7 @@ export const Dashboard = () => {
             }
         }
     }, [session?.id, session?.animal_id, selectedAnimal]);
+
 
     // Wrapper para addKill
     const addKill = useCallback(async (
@@ -317,8 +324,14 @@ export const Dashboard = () => {
                         window.ipcRenderer.send('update-hotkeys', hotkeyMap);
                     }
                 }
+
+                // Load HUD settings
+                const hudScaleSetting = await db.settings.get('hud_scale');
+                if (hudScaleSetting) {
+                    setHudScale(parseFloat(hudScaleSetting.value));
+                }
             } catch (err) {
-                console.error('❌ Error loading hotkeys:', err);
+                console.error('❌ Error loading hotkeys/settings:', err);
             }
         };
 
@@ -574,76 +587,66 @@ export const Dashboard = () => {
     };
 
 
-    // Listen for global hotkeys from Electron - NO DEPENDENCIES to prevent re-registration
+    // Listen for global hotkeys from Electron
     useEffect(() => {
         if (!window.ipcRenderer) return;
 
-        console.log('🔧 Registering IPC listeners...');
-        let callCount = 0;
-
-        const handleIncrement = () => {
-            callCount++;
-            console.log(`📨 IPC RECEIVED: hotkey-increment (call #${callCount})`);
-            (window as any).__hotkeyAddKill?.();
+        const handleIncrement = () => updateCounterRef.current(1);
+        const handleDecrement = () => updateCounterRef.current(-1);
+        const handleStats = () => handleToggleStatsRef.current();
+        const handleTray = () => toggleTrayRef.current();
+        const handleOverlay = () => toggleOverlayRef.current();
+        const handleNeedZones = () => {
+            console.log('📨 IPC: Need Zones event received');
+            window.ipcRenderer.send('open-need-zones');
         };
 
-        const handleDecrement = () => {
-            console.log('📨 IPC RECEIVED: hotkey-decrement');
-            (window as any).__hotkeyRemoveKill?.();
-        };
-
-        const handleStats = () => {
-            console.log('📨 IPC RECEIVED: hotkey-stats');
-            (window as any).__hotkeyToggleStats?.();
-        };
-
-        const handleTray = () => {
-            console.log('📨 IPC RECEIVED: hotkey-tray');
-            (window as any).__hotkeyToggleTray?.();
-        };
-
-        const handleOverlay = () => {
-            console.log('📨 IPC RECEIVED: hotkey-overlay');
-            (window as any).__hotkeyToggleOverlay?.();
-        };
-
-        // IMPORTANT: Use 'once' instead of 'on' to prevent duplicate calls
+        // Clean any potential duplicate listeners
         window.ipcRenderer.removeAllListeners('hotkey-increment');
         window.ipcRenderer.removeAllListeners('hotkey-decrement');
         window.ipcRenderer.removeAllListeners('hotkey-stats');
         window.ipcRenderer.removeAllListeners('hotkey-tray');
         window.ipcRenderer.removeAllListeners('hotkey-overlay');
+        window.ipcRenderer.removeAllListeners('hotkey-need-zones');
 
         window.ipcRenderer.on('hotkey-increment', handleIncrement);
         window.ipcRenderer.on('hotkey-decrement', handleDecrement);
         window.ipcRenderer.on('hotkey-stats', handleStats);
         window.ipcRenderer.on('hotkey-tray', handleTray);
         window.ipcRenderer.on('hotkey-overlay', handleOverlay);
+        window.ipcRenderer.on('hotkey-need-zones', handleNeedZones);
 
-        window.ipcRenderer.on('hotkey-status', (_event, status) => {
-            console.log('⌨️ Hotkey Status:', status);
-            if (!status.success) {
-                console.error(`❌ Hotkey failed: ${status.key} (${status.accelerator}) - ${status.error}`);
-            }
-        });
+        const handleSettings = (_event: any, settings: any) => {
+            if (settings.fontSize !== undefined) updateFontSizeRef.current(settings.fontSize);
+            if (settings.showDetailedMode !== undefined) setShowDetailedModeRef.current(settings.showDetailedMode);
+        };
 
-        console.log('✅ IPC listeners registered');
+        const handleResetTrigger = () => {
+            handleResetStats();
+        };
+
+        window.ipcRenderer.on('sync-settings', handleSettings);
+        window.ipcRenderer.on('trigger-reset-stats', handleResetTrigger);
 
         return () => {
-            console.log('🧹 Cleaning up IPC listeners...');
             window.ipcRenderer.off('hotkey-increment', handleIncrement);
             window.ipcRenderer.off('hotkey-decrement', handleDecrement);
             window.ipcRenderer.off('hotkey-stats', handleStats);
             window.ipcRenderer.off('hotkey-tray', handleTray);
             window.ipcRenderer.off('hotkey-overlay', handleOverlay);
+            window.ipcRenderer.off('hotkey-need-zones', handleNeedZones);
+            window.ipcRenderer.off('sync-settings', handleSettings);
+            window.ipcRenderer.off('trigger-reset-stats', handleResetTrigger);
         };
-    }, []); // EMPTY DEPS - register only once
+    }, []);
 
     // Use refs to always have the latest functions without recreating window handlers
     const updateCounterRef = useRef(updateCounter);
     const handleToggleStatsRef = useRef(handleToggleStats);
     const toggleTrayRef = useRef(toggleTray);
     const toggleOverlayRef = useRef(() => window.ipcRenderer.invoke('toggle-overlay'));
+    const updateFontSizeRef = useRef(updateFontSize);
+    const setShowDetailedModeRef = useRef(setShowDetailedMode);
 
 
     // Keep refs updated
@@ -651,7 +654,9 @@ export const Dashboard = () => {
         updateCounterRef.current = updateCounter;
         handleToggleStatsRef.current = handleToggleStats;
         toggleTrayRef.current = toggleTray;
-    }, [updateCounter, handleToggleStats, toggleTray]);
+        updateFontSizeRef.current = updateFontSize;
+        setShowDetailedModeRef.current = setShowDetailedMode;
+    }, [updateCounter, handleToggleStats, toggleTray, updateFontSize, setShowDetailedMode]);
 
     // Expose stable handlers to window for hotkeys (only set once)
     useEffect(() => {
@@ -757,14 +762,14 @@ export const Dashboard = () => {
                         className="relative h-8 w-full shrink-0 overflow-hidden border-b border-hunter-orange/50 bg-gradient-to-r from-hunter-orange/90 to-orange-600/80 flex items-center justify-between px-2"
                         style={{ WebkitAppRegion: 'drag' } as any}
                     >
-                        {/* Hamburger Menu Button (No Drag) */}
+                        {/* Settings Button (No Drag) */}
                         <button
-                            onClick={() => setShowMenu(true)}
+                            onClick={() => window.ipcRenderer.send('open-hotkey-settings')}
                             className="w-6 h-6 flex items-center justify-center text-stone-950 hover:bg-stone-950/20 rounded "
-                            title="Menu"
+                            title="Configurações (Atalhos, HUD, Geral)"
                             style={{ WebkitAppRegion: 'no-drag' } as any}
                         >
-                            <i className="fa-solid fa-bars text-sm"></i>
+                            <i className="fa-solid fa-cog text-sm"></i>
                         </button>
 
                         {/* Title (Centered) */}
@@ -801,14 +806,6 @@ export const Dashboard = () => {
                                 <i className="fa-solid fa-layer-group text-xs"></i>
                             </button>
 
-                            {/* Hotkeys Button */}
-                            <button
-                                onClick={() => window.ipcRenderer.send('open-hotkey-settings')}
-                                title="Configurar Atalhos"
-                                className="w-6 h-6 rounded-full bg-stone-800 border border-stone-700 text-stone-400 hover:text-white hover:bg-stone-700 flex items-center justify-center"
-                            >
-                                <i className="fa-solid fa-keyboard text-xs"></i>
-                            </button>
 
                             {/* Botão de Toggle Bandeja */}
                             <button
@@ -1364,6 +1361,10 @@ export const Dashboard = () => {
                                                                     <span className="text-stone-500 text-[10px] uppercase block">Raros</span>
                                                                     <span className="text-purple-400 font-bold">{activeSession.total_rare_furs || 0}</span>
                                                                 </div>
+                                                                <div>
+                                                                    <span className="text-stone-500 text-[10px] uppercase block">Trolls</span>
+                                                                    <span className="text-red-500 font-bold">{activeSession.total_trolls || 0}</span>
+                                                                </div>
                                                             </div>
 
                                                             {/* Averages - Only if there are kills */}
@@ -1391,6 +1392,14 @@ export const Dashboard = () => {
                                                                                 <span className="text-stone-500">Abates/Raro:</span>
                                                                                 <span className="text-purple-300 font-bold">
                                                                                     {(activeSession.total_kills / activeSession.total_rare_furs).toFixed(1)}
+                                                                                </span>
+                                                                            </div>
+                                                                        )}
+                                                                        {activeSession.total_trolls > 0 && (
+                                                                            <div className="flex justify-between">
+                                                                                <span className="text-stone-500">Abates/Troll:</span>
+                                                                                <span className="text-red-300 font-bold">
+                                                                                    {(activeSession.total_kills / activeSession.total_trolls).toFixed(1)}
                                                                                 </span>
                                                                             </div>
                                                                         )}
@@ -1480,6 +1489,9 @@ export const Dashboard = () => {
                                                                 <span className="flex items-center gap-1 text-go-gold">
                                                                     <i className="fa-solid fa-crown"></i> {animalStat.total_great_ones}
                                                                 </span>
+                                                                <span className="flex items-center gap-1 text-red-500">
+                                                                    <i className="fa-solid fa-skull"></i> {animalStat.total_trolls || 0}
+                                                                </span>
                                                             </div>
 
                                                             <div className="w-full h-1 bg-stone-800 rounded-full overflow-hidden">
@@ -1511,6 +1523,10 @@ export const Dashboard = () => {
                                                                         <div className="bg-stone-950/50 p-1.5 rounded">
                                                                             <span className="text-stone-500 block text-[8px]">Raros</span>
                                                                             <span className="text-purple-400 font-bold">{animalStat.total_rares || 0}</span>
+                                                                        </div>
+                                                                        <div className="bg-stone-950/50 p-1.5 rounded">
+                                                                            <span className="text-stone-500 block text-[8px]">Trolls</span>
+                                                                            <span className="text-red-500 font-bold">{animalStat.total_trolls || 0}</span>
                                                                         </div>
                                                                     </div>
 
@@ -1581,6 +1597,14 @@ export const Dashboard = () => {
                                                                                     <span className="text-stone-500">Abat./Raro:</span>
                                                                                     <span className="text-purple-300 font-bold">
                                                                                         {(animalStat.total_kills / animalStat.total_rares).toFixed(1)}
+                                                                                    </span>
+                                                                                </div>
+                                                                            )}
+                                                                            {animalStat.total_trolls > 0 && (
+                                                                                <div className="flex justify-between">
+                                                                                    <span className="text-stone-500">Abat./Troll:</span>
+                                                                                    <span className="text-red-300 font-bold">
+                                                                                        {(animalStat.total_kills / animalStat.total_trolls).toFixed(1)}
                                                                                     </span>
                                                                                 </div>
                                                                             )}
@@ -1707,27 +1731,6 @@ export const Dashboard = () => {
             </div>
 
             {/* Modals & Overlays */}
-            <HamburgerMenu
-                show={showMenu}
-                onClose={() => setShowMenu(false)}
-                fontSize={fontSize}
-                onFontSizeChange={updateFontSize}
-                onResetStats={() => {
-                    handleResetStats();
-                    setShowMenu(false); // Ensure menu closes after reset
-                }}
-                onShowAbout={() => {
-                    setShowMenu(false);
-                    setShowAbout(true);
-                }}
-                onShowGuide={() => {
-                    setShowMenu(false);
-                    window.ipcRenderer.send('open-user-guide');
-                }}
-                onShowMigration={() => { }} // Disabled/Removed
-                showDetailedMode={showDetailedMode}
-                onToggleDetailedMode={setShowDetailedMode}
-            />
 
             <ConfirmationModal
                 show={confirmModal.show}

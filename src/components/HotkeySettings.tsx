@@ -8,7 +8,9 @@ export const HotkeySettings = () => {
         decrement: 'Alt+Shift+-',
         stats: 'Alt+Shift+S',
         tray: 'Alt+Shift+G',
-        overlay: 'Alt+Shift+H'
+        overlay: 'Alt+Shift+H',
+        detailedStats: 'Alt+Shift+]',
+        needZones: 'Alt+Shift+['
     });
     const [tempHotkeys, setTempHotkeys] = useState<Record<string, string>>({});
     const [hotkeyToEdit, setHotkeyToEdit] = useState<string | null>(null);
@@ -90,6 +92,8 @@ export const HotkeySettings = () => {
                         { id: 'stats', label: 'Estatísticas', icon: 'fa-chart-column' },
                         { id: 'tray', label: 'Compactar/Expandir', icon: 'fa-right-to-bracket' },
                         { id: 'overlay', label: 'HUD (Overlay)', icon: 'fa-layer-group' },
+                        { id: 'detailedStats', label: 'Estatísticas Detalhadas', icon: 'fa-chart-pie' },
+                        { id: 'needZones', label: 'Horários de Necessidade', icon: 'fa-clock' },
                     ].map((item) => (
                         <div key={item.id} className="bg-stone-800/20 p-2 rounded border border-stone-700/50 hover:border-stone-600 transition-colors group">
                             <div className="flex justify-between items-center mb-1.5">
@@ -155,6 +159,10 @@ export const HotkeySettings = () => {
                                             else if (key === '+') key = 'Plus';
                                             else if (key === '-') key = 'Minus';
                                             else if (key === '=') key = 'Plus'; // Shift + = is Plus
+                                            else if (key === '[') key = '[';
+                                            else if (key === ']') key = ']';
+                                            else if (key === '{') key = '[';
+                                            else if (key === '}') key = ']';
 
                                             // Normalize key name (e.g., 'a' -> 'A')
                                             if (key.length === 1) {
@@ -184,7 +192,9 @@ export const HotkeySettings = () => {
                             decrement: 'numsub',
                             stats: 'Alt+Shift+S',
                             tray: 'Alt+Shift+G',
-                            overlay: 'Alt+Shift+H'
+                            overlay: 'Alt+Shift+H',
+                            detailedStats: 'Alt+Shift+]',
+                            needZones: 'Alt+Shift+['
                         };
                         setTempHotkeys(defaults);
                         setHotkeyToEdit(null);

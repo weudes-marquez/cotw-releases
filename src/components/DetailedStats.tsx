@@ -224,15 +224,15 @@ export const DetailedStats: React.FC = () => {
                     </div>
                 </div>
             ) : stats ? (
-                <div className="flex-1 overflow-y-auto p-4 space-y-5 custom-scrollbar">
+                <div className="flex-1 overflow-y-auto px-4 pt-0 pb-4 space-y-4 custom-scrollbar">
 
                     {/* Hero Header */}
                     <div className="flex flex-col md:flex-row md:items-end justify-between gap-4">
                         <div>
-                            <h1 className="text-2xl font-serif font-black tracking-tighter text-white">
+                            <h1 className="text-2xl font-serif font-black tracking-tighter text-white leading-tight">
                                 Painel de <span className="text-hunter-orange">Caça</span>
                             </h1>
-                            <p className="text-stone-400 mt-1 flex items-center gap-2 uppercase text-[10px] tracking-[0.2em] font-bold">
+                            <p className="text-stone-400 mt-0.5 flex items-center gap-2 uppercase text-[10px] tracking-[0.2em] font-bold">
                                 <span className="w-1.5 h-1.5 bg-green-500 rounded-full shadow-[0_0_5px_rgba(34,197,94,0.6)]"></span>
                                 Análise em Tempo Real • Histórico Global
                             </p>
@@ -479,6 +479,11 @@ export const DetailedStats: React.FC = () => {
                                                                 {animal.diamonds > 0 && (
                                                                     <span className="bg-blue-500/20 text-blue-400 text-[9px] px-2 py-0.5 rounded font-black border border-blue-500/30">
                                                                         {animal.diamonds} DIMAS
+                                                                    </span>
+                                                                )}
+                                                                {animal.trolls > 0 && (
+                                                                    <span className="bg-red-500/20 text-red-400 text-[9px] px-2 py-0.5 rounded font-black border border-red-500/30">
+                                                                        {animal.trolls} TROLLS
                                                                     </span>
                                                                 )}
                                                             </div>

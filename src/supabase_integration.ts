@@ -74,7 +74,7 @@ export async function createGrindSession(userId: string, animalId: string, anima
     return data as GrindSession;
 }
 
-export async function getSessionStatistics(sessionId: string) {
+export async function getSessionStatistics(sessionId: string): Promise<SessionStatistics> {
     const { data, error } = await supabase
         .from('session_statistics')
         .select('*')
@@ -88,7 +88,8 @@ export async function getSessionStatistics(sessionId: string) {
         total_kills: 0,
         total_diamonds: 0,
         total_great_ones: 0,
-        total_rare_furs: 0
+        total_rare_furs: 0,
+        total_trolls: 0
     };
 }
 
@@ -458,6 +459,7 @@ export async function getActiveSessions(userId: string) {
     if (!sessions) return [];
     const { data: stats } = await supabase.from('session_statistics').select('*').in('session_id', sessions.map(s => s.id));
     const { data: rareKills } = await supabase.from('kill_records').select('session_id, fur_type_name').in('session_id', sessions.map(s => s.id)).not('fur_type_id', 'is', null);
+    const { data: trollKills } = await supabase.from('kill_records').select('session_id').in('session_id', sessions.map(s => s.id)).eq('is_troll', true);
 
     return sessions.map(s => ({
         ...s,
@@ -465,6 +467,7 @@ export async function getActiveSessions(userId: string) {
         total_diamonds: stats?.find(st => st.session_id === s.id)?.total_diamonds || 0,
         total_great_ones: stats?.find(st => st.session_id === s.id)?.total_great_ones || 0,
         total_rare_furs: stats?.find(st => st.session_id === s.id)?.total_rare_furs || 0,
+        total_trolls: trollKills?.filter(tk => tk.session_id === s.id).length || 0,
         rare_furs: rareKills?.filter(rk => rk.session_id === s.id).map(rk => rk.fur_type_name) || []
     }));
 }
@@ -505,6 +508,8 @@ export async function getUserHistoricalStats(userId: string) {
     const { data: sessions } = await supabase.from('grind_sessions').select('*, session_statistics(*)').eq('user_id', supabaseId);
     // Buscar TODOS os abates que possuem pelagem (Raros e Super Raros)
     const { data: allRares } = await supabase.from('kill_records').select('*').eq('user_id', supabaseId).not('fur_type_id', 'is', null);
+    // Buscar TODOS os abates que são Trolls
+    const { data: allTrolls } = await supabase.from('kill_records').select('*').eq('user_id', supabaseId).eq('is_troll', true);
 
     const statsMap: Record<string, any> = {};
     sessions?.forEach(s => {
@@ -515,6 +520,7 @@ export async function getUserHistoricalStats(userId: string) {
             total_diamonds: 0,
             total_great_ones: 0,
             total_rares: 0,
+            total_trolls: 0,
             super_rares: 0,
             super_rare_list: [],
             last_session_date: s.start_date,
@@ -551,6 +557,11 @@ export async function getUserHistoricalStats(userId: string) {
                     entry.rare_types.push(sr.fur_type_name);
                 }
             }
+        }
+    });
+    allTrolls?.forEach(t => {
+        if (statsMap[t.animal_id]) {
+            statsMap[t.animal_id].total_trolls++;
         }
     });
     return Object.values(statsMap).sort((a: any, b: any) => b.total_kills - a.total_kills);

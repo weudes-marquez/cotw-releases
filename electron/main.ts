@@ -1,11 +1,35 @@
 import { app, BrowserWindow, ipcMain, globalShortcut, screen } from 'electron'
 import path from 'path'
 import { autoUpdater } from 'electron-updater'
+import koffi from 'koffi'
+
+// Load user32.dll for low-level input
+const user32 = koffi.load('user32.dll')
+const GetAsyncKeyState = user32.func('int16_t __stdcall GetAsyncKeyState(int vKey)')
+
+// Virtual Key Codes
+const VK_ADD = 0x6B      // Numpad +
+const VK_SUBTRACT = 0x6D // Numpad -
+const VK_S = 0x53        // 'S' key
+const VK_H = 0x48        // 'H' key
+const VK_G = 0x47        // 'G' key
+const VK_SHIFT = 0x10
+const VK_CONTROL = 0x11
+const VK_MENU = 0x12     // Alt
+const VK_D = 0x44        // 'D' key
+const VK_N = 0x4E        // 'N' key
+
+let pollingInterval: NodeJS.Timeout | null = null
 import log from 'electron-log'
 
 import { fileURLToPath } from 'node:url'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
+
+// Prevent Chromium from slowing down the app when it's behind the game
+app.commandLine.appendSwitch('disable-renderer-backgrounding')
+app.commandLine.appendSwitch('disable-background-timer-throttling')
+app.commandLine.appendSwitch('disable-backgrounding-occluded-windows')
 app.disableHardwareAcceleration()
 
 // The built directory structure
@@ -25,21 +49,21 @@ let win: BrowserWindow | null
 let overlayWin: BrowserWindow | null
 let needZonesWin: BrowserWindow | null = null
 let detailedStatsWin: BrowserWindow | null = null
-let hotkeySettingsWin: BrowserWindow | null = null
+let settingsWin: BrowserWindow | null = null
 
 const VITE_DEV_SERVER_URL = process.env['VITE_DEV_SERVER_URL']
 
-function createHotkeySettingsWindow() {
-    if (hotkeySettingsWin) {
-        hotkeySettingsWin.focus()
+function createSettingsWindow() {
+    if (settingsWin) {
+        settingsWin.focus()
         return
     }
 
     // Calculate position next to main window
     let x = undefined
     let y = undefined
-    const winWidth = 360
-    const winHeight = 520
+    const winWidth = 380
+    const winHeight = 600
 
     if (win) {
         const winBounds = win.getBounds()
@@ -59,7 +83,7 @@ function createHotkeySettingsWindow() {
         y = Math.max(workArea.y, Math.min(winBounds.y, workArea.y + workArea.height - winHeight))
     }
 
-    hotkeySettingsWin = new BrowserWindow({
+    settingsWin = new BrowserWindow({
         width: winWidth,
         height: winHeight,
         x,
@@ -75,19 +99,23 @@ function createHotkeySettingsWindow() {
     })
 
     const url = VITE_DEV_SERVER_URL
-        ? `${VITE_DEV_SERVER_URL}#/hotkeys`
-        : path.join(process.env.DIST!, 'index.html') + '#/hotkeys'
+        ? `${VITE_DEV_SERVER_URL}#/settings`
+        : path.join(process.env.DIST!, 'index.html') + '#/settings'
 
     if (VITE_DEV_SERVER_URL) {
-        hotkeySettingsWin.loadURL(url)
+        settingsWin.loadURL(url)
     } else {
-        hotkeySettingsWin.loadFile(path.join(process.env.DIST!, 'index.html'), { hash: 'hotkeys' })
+        settingsWin.loadFile(path.join(process.env.DIST!, 'index.html'), { hash: 'settings' })
     }
 
-    hotkeySettingsWin.on('closed', () => {
-        hotkeySettingsWin = null
+    settingsWin.on('closed', () => {
+        settingsWin = null
     })
 }
+
+ipcMain.on('open-hotkey-settings', () => {
+    createSettingsWindow()
+})
 
 function createWindow() {
     console.log('🔵 Creating main window...')
@@ -154,8 +182,17 @@ function createWindow() {
     })
 
     win.on('closed', () => {
-        console.log('🔴 Main window closed')
+        console.log('🔴 Main window closed - Shutting down all windows')
+
+        // Close all other windows when main window is closed
+        BrowserWindow.getAllWindows().forEach(w => {
+            if (w !== win && !w.isDestroyed()) {
+                w.destroy()
+            }
+        })
+
         win = null
+        app.quit() // Force app to quit when main window is gone
     })
 
     if (VITE_DEV_SERVER_URL) {
@@ -339,7 +376,7 @@ ipcMain.handle('open-detailed-stats', () => {
 });
 
 ipcMain.on('open-hotkey-settings', () => {
-    createHotkeySettingsWindow();
+    createSettingsWindow();
 });
 
 // IPC for Overlay
@@ -361,7 +398,15 @@ ipcMain.handle('toggle-overlay', (_event, show?: boolean) => {
 // IPC to control mouse pass-through for Overlay
 ipcMain.on('set-ignore-mouse-events', (event, ignore, options) => {
     const win = BrowserWindow.fromWebContents(event.sender)
-    win?.setIgnoreMouseEvents(ignore, { forward: true })
+    if (win) {
+        // Se as opções incluírem { forward: true }, usamos o comportamento padrão (ignora tudo)
+        // Se não, usamos o comportamento de 'clicar através apenas de áreas transparentes'
+        if (options && options.forward) {
+            win.setIgnoreMouseEvents(ignore, { forward: true })
+        } else {
+            win.setIgnoreMouseEvents(ignore)
+        }
+    }
 })
 
 // IPC for resizing window (e.g., for Login screen)
@@ -592,76 +637,164 @@ app.on('activate', () => {
     }
 })
 
+// Helper to map accelerator strings to Virtual Key codes (Windows)
+function parseAccelerator(acc: string): number[] {
+    if (!acc) return []
+    const parts = acc.toLowerCase().split('+')
+    const codes: number[] = []
+
+    const vkMapping: Record<string, number> = {
+        'alt': 0x12, 'shift': 0x10, 'ctrl': 0x11, 'control': 0x11, 'meta': 0x5B, 'command': 0x5B, 'cmd': 0x5B,
+        'space': 0x20, 'enter': 0x0D, 'return': 0x0D, 'tab': 0x09, 'escape': 0x1B, 'esc': 0x1B, 'backspace': 0x08,
+        'insert': 0x2D, 'delete': 0x2E, 'home': 0x24, 'end': 0x23, 'pageup': 0x21, 'pagedown': 0x22,
+        'up': 0x26, 'down': 0x28, 'left': 0x25, 'right': 0x27,
+        'f1': 0x70, 'f2': 0x71, 'f3': 0x72, 'f4': 0x73, 'f5': 0x74, 'f6': 0x75, 'f7': 0x76, 'f8': 0x77, 'f9': 0x78, 'f10': 0x79, 'f11': 0x7A, 'f12': 0x7B,
+        'numadd': 0x6B, 'numsub': 0x6D, 'nummult': 0x6A, 'numdiv': 0x6F, 'numdec': 0x6E,
+        'num0': 0x60, 'num1': 0x61, 'num2': 0x62, 'num3': 0x63, 'num4': 0x64, 'num5': 0x65, 'num6': 0x66, 'num7': 0x67, 'num8': 0x68, 'num9': 0x69,
+        'plus': 0xBB, '=': 0xBB, 'minus': 0xBD, '-': 0xBD, '[': 0xDB, '{': 0xDB, ']': 0xDD, '}': 0xDD,
+        ';': 0xBA, ':': 0xBA, '/': 0xBF, '?': 0xBF, '`': 0xC0, '~': 0xC0, '\\': 0xDC, '|': 0xDC, '\'': 0xDE, '"': 0xDE, ',': 0xBC, '<': 0xBC, '.': 0xBE, '>': 0xBE,
+        'capslock': 0x14, 'scrolllock': 0x91, 'numlock': 0x90, 'abnt_c1': 0xC1, 'abnt_c2': 0xC2
+    };
+
+    parts.forEach(part => {
+        const p = part.trim()
+        if (vkMapping[p]) {
+            codes.push(vkMapping[p])
+        } else if (p.length === 1) {
+            const charCode = p.toUpperCase().charCodeAt(0)
+            if ((charCode >= 65 && charCode <= 90) || (charCode >= 48 && charCode <= 57)) {
+                codes.push(charCode)
+            }
+        }
+    })
+    return Array.from(new Set(codes)) // Remove duplicates
+}
+
 // Hotkey management
 let currentHotkeys: Record<string, string> = {
     increment: 'numadd',
     decrement: 'numsub',
     stats: 'Alt+Shift+S',
     tray: 'Alt+Shift+G',
-    overlay: 'Alt+Shift+H'
+    overlay: 'Alt+Shift+H',
+    detailedStats: 'Alt+Shift+]',
+    needZones: 'Alt+Shift+['
+};
+
+function startNativePolling() {
+    console.log('🚀 [Main] Starting Dynamic Native Polling...')
+    if (pollingInterval) clearInterval(pollingInterval)
+
+    // State tracking for edge detection per action
+    let keyStates: Record<string, boolean> = {
+        increment: false,
+        decrement: false,
+        stats: false,
+        overlay: false,
+        tray: false,
+        detailedStats: false,
+        needZones: false
+    }
+
+    // Reset loop if hotkeys change to avoid "stuck" states
+    ipcMain.on('update-hotkeys-reset-poller', () => {
+        Object.keys(keyStates).forEach(key => keyStates[key] = false);
+    });
+
+    pollingInterval = setInterval(() => {
+        try {
+            const checkAction = (action: string, accelerator: string, callback: () => void) => {
+                const vkCodes = parseAccelerator(accelerator)
+                if (vkCodes.length === 0) return
+
+                // Checked if ALL keys in the accelerator are currently pressed
+                const isDown = vkCodes.every(code => {
+                    // Especial: Tecla '/' pode ser 0xBF (US) ou 0xC1 (ABNT2). 
+                    // Se o código for 0xBF, aceitamos 0xC1 como equivalente.
+                    if (code === 0xBF) {
+                        return (GetAsyncKeyState(0xBF) & 0x8000) !== 0 || (GetAsyncKeyState(0xC1) & 0x8000) !== 0
+                    }
+                    return (GetAsyncKeyState(code) & 0x8000) !== 0
+                })
+
+                // Trigger only on key down transition (edge detection)
+                if (isDown && !keyStates[action]) {
+                    console.log(`🎯 [Native] Action Triggered: ${action} (${accelerator})`)
+                    callback()
+                }
+                keyStates[action] = isDown
+            }
+
+            const broadcast = (channel: string) => {
+                BrowserWindow.getAllWindows().forEach(w => {
+                    if (!w.isDestroyed()) w.webContents.send(channel)
+                })
+            }
+
+            // Dynamically check whatever is in currentHotkeys
+            checkAction('increment', currentHotkeys.increment, () => broadcast('hotkey-increment'))
+            checkAction('decrement', currentHotkeys.decrement, () => broadcast('hotkey-decrement'))
+            checkAction('stats', currentHotkeys.stats, () => broadcast('hotkey-stats'))
+
+            checkAction('overlay', currentHotkeys.overlay, () => {
+                if (overlayWin && !overlayWin.isDestroyed()) {
+                    closeOverlay()
+                } else {
+                    createOverlayWindow()
+                }
+            })
+
+            checkAction('tray', currentHotkeys.tray, () => {
+                if (win) {
+                    toggleTray()
+                }
+            })
+
+            checkAction('detailedStats', currentHotkeys.detailedStats, () => {
+                if (detailedStatsWin && !detailedStatsWin.isDestroyed()) {
+                    detailedStatsWin.close()
+                } else {
+                    createDetailedStatsWindow()
+                }
+            })
+
+            checkAction('needZones', currentHotkeys.needZones, () => {
+                if (needZonesWin && !needZonesWin.isDestroyed()) {
+                    needZonesWin.close()
+                    needZonesWin = null
+                } else {
+                    broadcast('hotkey-need-zones')
+                }
+            })
+        } catch (e) {
+            // Silence polling errors
+        }
+    }, 50)
 }
 
 function registerGlobalHotkeys(customHotkeys?: Record<string, string>) {
-    // Unregister all first to avoid conflicts
-    globalShortcut.unregisterAll()
-
     if (customHotkeys) {
         currentHotkeys = { ...currentHotkeys, ...customHotkeys }
+        console.log('🔄 [Main] Hotkeys updated for poller:', currentHotkeys)
     }
-
-    // Helper to register with logging
-    const register = (key: string, accelerator: string, callback: () => void) => {
-        if (!accelerator) return
-        try {
-            const success = globalShortcut.register(accelerator, callback)
-            if (success) {
-                console.log(`✅ Registered hotkey: ${key} -> ${accelerator}`)
-                win?.webContents.send('hotkey-status', { key, accelerator, success: true })
-            } else {
-                console.error(`❌ Failed to register hotkey: ${key} -> ${accelerator} (Already in use?)`)
-                win?.webContents.send('hotkey-status', { key, accelerator, success: false, error: 'Already in use' })
-            }
-        } catch (err: any) {
-            console.error(`❌ Error registering hotkey ${key}:`, err)
-            win?.webContents.send('hotkey-status', { key, accelerator, success: false, error: err.message })
-        }
-    }
-
-    // Register each action
-    register('increment', currentHotkeys.increment, () => {
-        win?.webContents.send('hotkey-increment')
-    })
-
-    register('decrement', currentHotkeys.decrement, () => {
-        win?.webContents.send('hotkey-decrement')
-    })
-
-    register('stats', currentHotkeys.stats, () => {
-        win?.webContents.send('hotkey-stats')
-    })
-
-    register('tray', currentHotkeys.tray, () => {
-        if (win) {
-            if (win.isMinimized()) win.restore()
-            win.focus()
-            if (isRetracted) expandWindow()
-        }
-    })
-
-    register('overlay', currentHotkeys.overlay, () => {
-        if (overlayWin) closeOverlay()
-        else createOverlayWindow()
-    })
 }
 
 app.whenReady().then(() => {
     createWindow()
     registerGlobalHotkeys()
+    startNativePolling()
 
     // IPC to update hotkeys from settings
     ipcMain.on('update-hotkeys', (_event, newHotkeys) => {
         console.log('🔄 Updating global hotkeys:', newHotkeys)
         registerGlobalHotkeys(newHotkeys)
+        // Reset poller state for the new hotkeys
+        BrowserWindow.getAllWindows().forEach(w => {
+            if (!w.isDestroyed()) w.webContents.send('update-hotkeys-reset-poller')
+        });
+        // We also trigger a local reset if we are in the same process (poller is in main)
+        // Actually, let's just emit an IPC event to ourselves
+        ipcMain.emit('update-hotkeys-reset-poller');
     })
 
     // Tray Dragging Logic
@@ -703,6 +836,68 @@ app.whenReady().then(() => {
             trayDragInterval = null;
         }
     });
+
+    // HUD Controls
+    ipcMain.on('toggle-hud-edit', (_event, enabled) => {
+        if (overlayWin && !overlayWin.isDestroyed()) {
+            overlayWin.webContents.send('toggle-hud-edit', enabled)
+        }
+    })
+
+    ipcMain.on('update-hud-scale', (_event, scale) => {
+        if (overlayWin && !overlayWin.isDestroyed()) {
+            overlayWin.webContents.send('update-hud-scale', scale)
+        }
+    })
+
+    // Sync settings between windows
+    ipcMain.on('settings-updated', (_event, settings) => {
+        if (win && !win.isDestroyed()) {
+            win.webContents.send('sync-settings', settings)
+        }
+    })
+
+    // Reset All Stats Trigger
+    ipcMain.on('reset-all-stats', () => {
+        if (win && !win.isDestroyed()) {
+            win.webContents.send('trigger-reset-stats')
+        }
+    })
+
+    // Reset window positions
+    ipcMain.on('reset-windows', () => {
+        console.log('🔄 Resetting window positions...')
+        const primaryDisplay = screen.getPrimaryDisplay()
+        const { width, height } = primaryDisplay.workAreaSize
+
+        // Center main window
+        if (win && !win.isDestroyed()) {
+            win.setBounds({
+                x: Math.floor((width - WINDOW_WIDTH) / 2),
+                y: Math.floor((height - 520) / 2),
+                width: WINDOW_WIDTH,
+                height: 520
+            }, true)
+            win.setAlwaysOnTop(true, 'screen-saver')
+            win.show()
+        }
+
+        // Handle other windows if they are open
+        const otherWindows = [detailedStatsWin, settingsWin, needZonesWin]
+        otherWindows.forEach(w => {
+            if (w && !w.isDestroyed()) {
+                const bounds = w.getBounds()
+                w.setBounds({
+                    x: Math.floor((width - bounds.width) / 2) + 20, // Slightly offset so they don't stack perfectly
+                    y: Math.floor((height - bounds.height) / 2) + 20,
+                    width: bounds.width,
+                    height: bounds.height
+                }, true)
+                w.show()
+                w.focus()
+            }
+        })
+    })
 
     // Check for updates
     if (app.isPackaged) {
