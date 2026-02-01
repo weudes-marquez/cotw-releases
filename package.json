@@ -7,15 +7,15 @@
   "scripts": {
     "dev": "vite",
     "dev:first": "vite build --mode development && vite",
-    "build": "vite build && electron-builder",
+    "build": "if exist release (rmdir /s /q release) && vite build && electron-builder",
     "build:win": "vite build && electron-builder --win",
     "build:check": "tsc -b && vite build && electron-builder",
     "lint": "eslint .",
     "preview": "vite preview",
     "electron:dev": "vite",
-    "release:patch": "npm version patch && yarn build",
-    "release:minor": "npm version minor && yarn build",
-    "release:major": "npm version major && yarn build"
+    "release:patch": "npm version patch && npm run build -- --publish always",
+    "release:minor": "npm version minor && npm run build -- --publish always",
+    "release:major": "npm version major && npm run build -- --publish always"
   },
   "repository": {
     "type": "git",
@@ -49,12 +49,6 @@
           "arch": [
             "x64"
           ]
-        },
-        {
-          "target": "portable",
-          "arch": [
-            "x64"
-          ]
         }
       ]
     },
@@ -66,7 +60,8 @@
       "installerHeaderIcon": "build/icon.ico",
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
-      "shortcutName": "COTW Grind Counter"
+      "shortcutName": "COTW Grind Counter",
+      "artifactName": "COTW-Grind-Counter-Setup.${ext}"
     }
   },
   "description": "A grind counter for theHunter: Call of the Wild",

@@ -1,4 +1,4 @@
-import { defineConfig } from 'vite'
+import { defineConfig } from 'vitest/config'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import electron from 'vite-plugin-electron/simple'
@@ -32,6 +32,21 @@ export default defineConfig({
   ],
   // Expose environment variables to the renderer process
   envPrefix: ['VITE_'],
+  build: {
+    chunkSizeWarningLimit: 1000,
+    rollupOptions: {
+      output: {
+        manualChunks(id) {
+          if (id.includes('node_modules')) {
+            if (id.includes('firebase')) return 'vendor-firebase';
+            if (id.includes('@supabase')) return 'vendor-supabase';
+            if (id.includes('react')) return 'vendor-react';
+            return 'vendor';
+          }
+        }
+      }
+    }
+  },
   test: {
     environment: 'jsdom',
     globals: true,
